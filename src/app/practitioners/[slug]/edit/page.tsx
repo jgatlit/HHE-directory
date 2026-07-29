@@ -15,6 +15,8 @@ import {
   createOffering,
   updateOffering,
   deleteOffering,
+  publishOffering,
+  unpublishOffering,
   startWhopOnboarding,
   openPayoutPortal,
 } from './actions';
@@ -108,6 +110,8 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const createOfferingAction = createOffering.bind(null, params.slug);
   const updateOfferingAction = updateOffering.bind(null, params.slug);
   const deleteOfferingAction = deleteOffering.bind(null, params.slug);
+  const publishOfferingAction = publishOffering.bind(null, params.slug);
+  const unpublishOfferingAction = unpublishOffering.bind(null, params.slug);
   const startWhopOnboardingAction = startWhopOnboarding.bind(null, params.slug);
   const openPayoutPortalAction = openPayoutPortal.bind(null, params.slug);
 
@@ -218,6 +222,28 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
                 https://cal.com/your-username
               </code>
               or a Calendly / SavvyCal / Acuity link.
+            </p>
+          </Card>
+        )}
+        {searchParams.error === 'payouts-not-ready' && (
+          <Card className="border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive">
+              Set up payouts before publishing an offering — see &ldquo;Patient payments&rdquo;
+              below.
+            </p>
+          </Card>
+        )}
+        {searchParams.error === 'offering-not-ready' && (
+          <Card className="border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive">
+              That offering needs a price above $0 before it can be published.
+            </p>
+          </Card>
+        )}
+        {searchParams.error === 'offering-not-found' && (
+          <Card className="border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive">
+              That offering couldn&apos;t be found — it may have already been removed.
             </p>
           </Card>
         )}
@@ -465,10 +491,14 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             priceUsdCents: o.priceUsdCents,
             interval: o.interval,
             category: o.category,
+            purchaseUrl: o.purchaseUrl,
           }))}
+          payoutsEnabled={practitioner.whopPayoutsEnabled}
           createAction={createOfferingAction}
           updateAction={updateOfferingAction}
           deleteAction={deleteOfferingAction}
+          publishAction={publishOfferingAction}
+          unpublishAction={unpublishOfferingAction}
         />
 
         <PaymentsSection
