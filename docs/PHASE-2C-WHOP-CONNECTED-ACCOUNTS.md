@@ -396,10 +396,13 @@ inert until the next one (the same trap that bit `EMAIL_FROM` on 07-15).
 | Platform (Layer X) | `hook_AfcAy8KImM101` | `false` | 8 | `WHOP_V1_WEBHOOK_SECRET` |
 | Connected accounts (Layer Y) | `hook_DUkQVk9efwGbg` | `true` | 9 | `WHOP_V1_WEBHOOK_SECRET_CHILD` |
 
-Both `api_version: v1`, both pointing at `https://naturalhealthpros.com/api/whop/webhook/v1`, both
-currently **`enabled: false`**.
+Both `api_version: v1`, both pointing at `https://naturalhealthpros.com/api/whop/webhook/v1`.
 
-**Remaining step — enable after the deploy lands:**
+✅ **Both `enabled: true` as of 2026-07-29**, after PR #37 deployed (`dpl_8NbgmuN1YJYKn1Mg3HemDnJ1e5fi`,
+verified serving on the apex). An unsigned POST to the route returns `401`, not `503` — confirming
+the secrets are bound and signature verification is active in production.
+
+**To toggle (kept for reference):**
 
 ```bash
 K=$(sed -E 's/^[A-Za-z_]+[:=][[:space:]]*//' .env.whop.company | tr -d '"'"'"' \r\n')
