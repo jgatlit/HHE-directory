@@ -22,7 +22,7 @@
 
 **Phase 2B also shipped** (2026-05-25): practitioner-owned booking URLs (Cal.com / Calendly / SavvyCal / Acuity / etc.). Edit form has booking-link field with provider allowlist; public profile renders real `<a target="_blank">` link.
 
-**Phase 2C BLOCKED** (2026-05-25): operator-locked architecture is Whop for Platforms (Connected Accounts — multi-tenant payment routing). Whop Platforms API is **invite-only**; current API key is standard creator-account scope. **Blake/Amy follow-up**: align on Whop as payments primitive + email sales@whop.com to request Platforms access.
+**Phase 2C UNBLOCKED** (corrected 2026-07-29): operator-locked architecture is Whop Connected Accounts (multi-tenant payment routing). ⚠️ The long-standing "Whop Platforms API is **invite-only**" claim was a **context error** — "Platforms" and "Connected Accounts" are the same **self-serve** product, and `parent_company_id` is a documented optional field on the public `POST /api/v1/companies`. There is nothing to request from `sales@whop.com`; **do not send** the outbound templates in `docs/outbound/` or `docs/demo-prep/`. The actual blocker is an API-key class + scope problem (ours is an *App* key missing `company:create` etc.; the docs require a *Company* API key on `biz_Vpj1G2ryNdPCG0`) — a minutes-long dashboard fix. Validated architecture + unblock sequence: **`docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md`**. `docs/PHASE-2C-WHOP-DESIGN.md` is SUPERSEDED (wrong SDK, wrong call count, nonexistent KYC field, wrong webhook scheme).
 
 **Phase 1 (Block A + B + C) shipped**:
 - `/practitioners/[slug]` — Linktree-style profile, server-rendered (Block A)

@@ -95,7 +95,7 @@
           <button id="env-prod" class="active" type="button">Production</button>
           <button id="env-local" type="button">Local (localhost:3000)</button>
         </div>
-        <p class="meta-note">Generated 2026-07-17T00:16:55.204Z</p>
+        <p class="meta-note">Generated 2026-07-29T05:37:34.436Z</p>
       </header>
 
       <section class="group">
@@ -207,6 +207,28 @@
             <span class="badge live">Live</span>
           </div>
         </div>
+        <div class="route">
+          <div>
+            <div class="path"><a href="" data-route="/api/whop/onboarding/return" target="_blank">/api/whop/onboarding/return</a></div>
+            <p class="desc"><strong>Whop KYC return redirect.</strong> Auth + ownership gated. Best-effort ONLY — it fires the moment the practitioner submits the hosted form, before the provider approves, so it never sets <code>whopPayoutsEnabled</code>; the <code>identity_profile.approved</code> webhook is authoritative. Opportunistically refreshes <code>whopPayoutStatus</code>, and a failed refresh is non-fatal.</p>
+            
+          </div>
+          <div class="badges">
+            <span class="badge auth">Auth required</span>
+            <span class="badge live">Live</span>
+          </div>
+        </div>
+        <div class="route">
+          <div>
+            <div class="path"><a href="" data-route="/api/whop/onboarding/refresh" target="_blank">/api/whop/onboarding/refresh</a></div>
+            <p class="desc"><strong>Whop account-link refresh.</strong> Auth + ownership gated. Whop redirects here when a short-lived account link expires mid-flow; re-mints a fresh <code>account_onboarding</code> link and bounces straight back into the hosted KYC form.</p>
+            
+          </div>
+          <div class="badges">
+            <span class="badge auth">Auth required</span>
+            <span class="badge live">Live</span>
+          </div>
+        </div>
       </section>
 
       <section class="group">
@@ -249,12 +271,12 @@
         <div class="route">
           <div>
             <div class="path"><a href="" data-route="/admin/connected-accounts" target="_blank">/admin/connected-accounts</a></div>
-            <p class="desc"><strong>Whop sub-merchant lifecycle.</strong> 5-cell summary strip (Total / Verified / Pending / Not-started / Rejected) + sorted list per practitioner with KYC status badge + product count. Will populate once Whop Platforms access is granted; currently all NOT_STARTED.</p>
+            <p class="desc"><strong>Whop connected-account lifecycle + reconciliation.</strong> Per-practitioner payout status (Whop&rsquo;s raw <code>payout_status</code>) and the authoritative <code>payouts_enabled</code> gate, sorted so restricted accounts (<code>connected</code> but not payouts-enabled) surface first. Also joins the live <code>GET /companies?parent_company_id=</code> roster against local rows to surface drift in both directions — webhooks retry only ~70s before dropping events, so drift is expected and this is what catches it. Degrades to the local table if Whop is unreachable.</p>
             
           </div>
           <div class="badges">
             <span class="badge admin">Admin</span>
-            <span class="badge scaffold">Scaffold</span>
+            <span class="badge live">Live</span>
           </div>
         </div>
       </section>
@@ -265,13 +287,24 @@
         
         <div class="route">
           <div>
-            <div class="path">/api/whop/webhook</div>
-            <p class="desc"><strong>Whop webhook receiver.</strong> Designed in docs/PHASE-2C-WHOP-DESIGN.md but not yet implemented. Will verify HMAC + dedupe via whopEventId + persist to WhopWebhookEvent + process by eventType.</p>
+            <div class="path"><a href="" data-route="/api/whop/webhook" target="_blank">/api/whop/webhook</a></div>
+            <p class="desc"><strong>Legacy Whop webhook receiver (Layer X).</strong> Live — drives the $49/mo listing subscription: verifies via <code>@whop/api</code>&rsquo;s <code>makeWebhookValidator</code>, flips <code>subscriptionStatus</code>, re-runs the listing gate. <strong>Scheduled for retirement</strong> — <code>@whop/api</code> is deprecated on npm and this handler speaks the old <code>{action,data}</code> shape. Delete once the v1 registrations are observed delivering, then <code>npm rm @whop/api</code>. See docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md §6a step A5.</p>
             
           </div>
           <div class="badges">
             <span class="badge api">API</span>
-            <span class="badge scaffold">Not yet</span>
+            <span class="badge live">Live</span>
+          </div>
+        </div>
+        <div class="route">
+          <div>
+            <div class="path"><a href="" data-route="/api/whop/webhook/v1" target="_blank">/api/whop/webhook/v1</a></div>
+            <p class="desc"><strong>Whop API v1 webhook receiver.</strong> Standard Webhooks signature verification, deduped on the <code>webhook-id</code> header. Handles <code>identity_profile.*</code> and <code>payout_account.status_updated</code> (payout readiness &rarr; reindex) plus <code>payment.succeeded</code>. Two Whop registrations post here — one for the platform company, one for connected accounts (<code>child_resource_events</code> is exclusive, not additive) — so either signing secret validates. Fails closed with 503 until a secret is set; always 2xx otherwise, because Whop drops events after 3 retries (~70s). Runs ALONGSIDE the legacy /api/whop/webhook.</p>
+            
+          </div>
+          <div class="badges">
+            <span class="badge api">API</span>
+            <span class="badge live">Live</span>
           </div>
         </div>
         <div class="route">
@@ -283,28 +316,6 @@
           <div class="badges">
             <span class="badge api">API</span>
             <span class="badge live">Live</span>
-          </div>
-        </div>
-        <div class="route">
-          <div>
-            <div class="path">/api/whop/onboarding/start</div>
-            <p class="desc"><strong>Whop sub-merchant onboarding kickoff.</strong> Designed; will create the sub-merchant + KYC link. Gated on Whop for Platforms API access.</p>
-            
-          </div>
-          <div class="badges">
-            <span class="badge api">API</span>
-            <span class="badge scaffold">Not yet</span>
-          </div>
-        </div>
-        <div class="route">
-          <div>
-            <div class="path">/api/whop/onboarding/return</div>
-            <p class="desc"><strong>Whop sub-merchant onboarding return.</strong> Receives the KYC completion redirect. Updates Practitioner.whopKycStatus optimistically; webhook is authoritative.</p>
-            
-          </div>
-          <div class="badges">
-            <span class="badge api">API</span>
-            <span class="badge scaffold">Not yet</span>
           </div>
         </div>
       </section>

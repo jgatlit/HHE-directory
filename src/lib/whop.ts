@@ -1,208 +1,332 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
- * Whop Platforms client wrapper — Wedge 2C scaffold.
+ * Whop v1 client — Connected Accounts (Layer Y) + per-practitioner subscription checkout (Layer X).
  *
- * STATUS (2026-05-25): All functions are stubs that throw
- * WhopPlatformsAccessNotConfigured until HHE secures Whop for Platforms API access
- * (operator-side action via sales@whop.com — see docs/demo-prep/2026-05-25-whop-platforms-request.md).
+ * Architecture + validated API shapes: docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md
  *
- * Type signatures + return shapes mirror Whop's actual API so swap-in is a
- * one-file change once the Platforms-scoped API key + parent company ID arrive
- * in env. See docs/PHASE-2C-WHOP-DESIGN.md for the full lifecycle spec.
+ * Two independent money paths share this one client:
+ *   Layer X  practitioner → us    billed on OUR company    (they're a member)
+ *   Layer Y  patient → practitioner  billed on THEIR company (they're a connected account)
  */
 
-import { ProductInterval } from '@prisma/client';
+import Whop from '@whop/sdk';
+import { SITE_URL } from '@/lib/site';
 
-export class WhopPlatformsAccessNotConfigured extends Error {
+export class WhopNotConfigured extends Error {
   constructor(action: string) {
     super(
-      `Whop Platforms access not configured — cannot ${action}. ` +
-        'Status: API key on file is standard creator-account scope, returns 401 on /connected_accounts. ' +
-        'Operator-side action: email sales@whop.com to request Whop for Platforms access. ' +
-        'See docs/demo-prep/2026-05-25-whop-platforms-request.md for the application template.',
+      `Whop is not configured — cannot ${action}. ` +
+        'Requires WHOP_COMPANY_API_KEY (a COMPANY API key on the parent company, not an app key) ' +
+        'and WHOP_PARENT_COMPANY_ID. See docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md §6.',
     );
-    this.name = 'WhopPlatformsAccessNotConfigured';
+    this.name = 'WhopNotConfigured';
   }
 }
 
-const WHOP_API_BASE = process.env.WHOP_API_BASE ?? 'https://api.whop.com/api/v1';
+/** Whop's calculated payout-readiness statuses. Stored as a String column, never a DB enum —
+ *  an unmapped value from Whop must not throw inside a webhook handler and poison the retry. */
+export type WhopPayoutStatus =
+  | 'not_started'
+  | 'pending_verification'
+  | 'action_required'
+  | 'manual_review'
+  | 'connected'
+  | 'disabled'
+  | 'verification_failed'
+  | 'denied'
+  | 'blocked_by_parent';
 
-function platformsReady(): boolean {
-  // When access lands, also verify WHOP_PARENT_COMPANY_ID is set.
-  // Today, the existing WHOP_API_KEY is creator-scope only; treat platforms as not-ready.
-  return !!process.env.WHOP_PLATFORMS_ENABLED && !!process.env.WHOP_PARENT_COMPANY_ID;
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Type definitions matching Whop Platforms API responses
-// ──────────────────────────────────────────────────────────────────────────────
-
-export type WhopSubMerchant = {
-  id: string; // e.g., "biz_xxxxxxxxxxxxx"
-  parent_company_id: string;
-  email: string;
-  title: string;
-  metadata?: Record<string, string>;
-  created_at: number;
-};
-
-export type WhopAccountLink = {
-  url: string; // hosted KYC onboarding URL
-  expires_at: number;
-};
-
-export type WhopProductResponse = {
-  id: string;
-  company_id: string;
-  title: string;
-  description?: string;
-};
-
-export type WhopPlanResponse = {
-  id: string;
-  product_id: string;
-  price_cents: number;
-  currency: string;
-  interval: 'one_time' | 'monthly' | 'annual';
-};
-
-export type WhopCheckoutConfigResponse = {
-  id: string;
-  company_id: string;
-  plan_id: string;
-  purchase_url: string;
-  application_fee_amount: number;
-};
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Sub-merchant lifecycle (Connected Account)
-// ──────────────────────────────────────────────────────────────────────────────
-
-/**
- * Create a sub-merchant company for a practitioner.
- *
- * Real call (once Platforms access granted):
- *   POST /v1/companies
- *   { email, parent_company_id: WHOP_PARENT_COMPANY_ID, title, metadata }
- *
- * Reference: https://docs.whop.com/developer/platforms/enroll-connected-accounts
- */
-export async function createSubMerchant(_params: {
-  email: string;
-  title: string;
-  metadata?: Record<string, string>;
-}): Promise<WhopSubMerchant> {
-  if (!platformsReady()) {
-    throw new WhopPlatformsAccessNotConfigured('create sub-merchant');
-  }
-  // TODO: wire when access lands
-  // const res = await whopFetch('POST', '/companies', {
-  //   email, parent_company_id: process.env.WHOP_PARENT_COMPANY_ID, title, metadata
-  // });
-  // return res as WhopSubMerchant;
-  throw new WhopPlatformsAccessNotConfigured('create sub-merchant');
-}
-
-/**
- * Generate a KYC verification link that the practitioner completes at Whop's hosted UI.
- *
- * Real call:
- *   POST /v1/account_links
- *   { company_id, refresh_url, return_url, use_case: 'account_onboarding' }
- */
-export async function createAccountLink(_params: {
-  companyId: string;
-  refreshUrl: string;
-  returnUrl: string;
-}): Promise<WhopAccountLink> {
-  if (!platformsReady()) {
-    throw new WhopPlatformsAccessNotConfigured('create KYC account link');
-  }
-  throw new WhopPlatformsAccessNotConfigured('create KYC account link');
-}
-
-/**
- * Fetch the current KYC + payout-readiness status of a sub-merchant.
- * Used by the onboarding return route + admin dashboard.
- *
- * Real call: GET /v1/companies/{company_id}
- */
-export async function getSubMerchantStatus(_companyId: string): Promise<{
-  id: string;
-  kyc_status: 'pending' | 'verified' | 'rejected';
-  payouts_enabled: boolean;
-}> {
-  if (!platformsReady()) {
-    throw new WhopPlatformsAccessNotConfigured('check sub-merchant status');
-  }
-  throw new WhopPlatformsAccessNotConfigured('check sub-merchant status');
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Product lifecycle
-// ──────────────────────────────────────────────────────────────────────────────
-
-/**
- * Create a product on a sub-merchant company. Three-step API call:
- *   1. POST /v1/products → product.id
- *   2. POST /v1/plans → plan.id (pricing tier)
- *   3. POST /v1/checkout_configurations → checkout_config.id + purchase_url
- *
- * Returns the composite IDs + purchase_url for storage in WhopProduct.
- */
-export async function createProductForSubMerchant(_params: {
-  companyId: string;
-  title: string;
-  description?: string;
-  priceUsdCents: number;
-  applicationFeeCents: number;
-  interval: ProductInterval;
-}): Promise<{
-  whopProductId: string;
-  whopPlanId: string;
-  whopCheckoutConfigId: string;
-  purchaseUrl: string;
-}> {
-  if (!platformsReady()) {
-    throw new WhopPlatformsAccessNotConfigured('create product');
-  }
-  throw new WhopPlatformsAccessNotConfigured('create product');
-}
-
-/**
- * Archive (soft-delete) a product. Real call: PATCH /v1/products/{id} with visible=false.
- * Existing subscriptions continue per Whop's terms.
- */
-export async function archiveProduct(_whopProductId: string): Promise<void> {
-  if (!platformsReady()) {
-    throw new WhopPlatformsAccessNotConfigured('archive product');
-  }
-  throw new WhopPlatformsAccessNotConfigured('archive product');
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Webhook verification (HMAC)
-// ──────────────────────────────────────────────────────────────────────────────
-
-/**
- * Verify a webhook signature using the WHOP_WEBHOOK_SECRET.
- * Real impl: HMAC-SHA256 over the raw body, compare against x-whop-signature header.
- */
-export function verifyWebhookSignature(
-  _rawBody: string,
-  _signatureHeader: string | null,
-): boolean {
-  if (!process.env.WHOP_WEBHOOK_SECRET) return false;
-  // TODO: actual HMAC verification once Platforms access lands and we know
-  // Whop's exact signature scheme. For now, return false to refuse all
-  // unverified webhooks.
-  return false;
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Status export (used by UI to render "Coming soon" vs real CTAs)
-// ──────────────────────────────────────────────────────────────────────────────
+const WHOP_CHECKOUT_ORIGIN = 'https://whop.com';
 
 export function isWhopPlatformsReady(): boolean {
-  return platformsReady();
+  return !!process.env.WHOP_COMPANY_API_KEY && !!process.env.WHOP_PARENT_COMPANY_ID;
+}
+
+let cached: Whop | null = null;
+
+function client(action: string): Whop {
+  if (!isWhopPlatformsReady()) throw new WhopNotConfigured(action);
+  if (!cached) {
+    cached = new Whop({
+      apiKey: process.env.WHOP_COMPANY_API_KEY,
+      // Standard Webhooks expects the secret base64-encoded.
+      webhookKey: process.env.WHOP_V1_WEBHOOK_SECRET
+        ? Buffer.from(process.env.WHOP_V1_WEBHOOK_SECRET).toString('base64')
+        : undefined,
+      ...(process.env.WHOP_API_BASE ? { baseURL: process.env.WHOP_API_BASE } : {}),
+    });
+  }
+  return cached;
+}
+
+/**
+ * Raw v1 POST, used ONLY for checkout-configuration creation.
+ *
+ * `@whop/sdk@0.0.42` is generated from an older OpenAPI snapshot than the published docs: its
+ * checkout-config params have no `application_fee_amount` and no inline `product`, and name the
+ * company field `account_id` where the docs (and Whop's own support guidance, 2026-07-28) say
+ * `company_id`. Since a future platform fee is a stated requirement, this one call is issued
+ * against the documented contract instead of the stale generated type.
+ *
+ * ⚠️ VERIFY ON FIRST LIVE CALL. If Whop 400s on `company_id`, retry with `account_id` — that is
+ * the single most likely failure in this integration, and it cannot be checked without a
+ * scoped Company API key.
+ */
+async function whopPost<T>(path: string, body: unknown, action: string): Promise<T> {
+  if (!isWhopPlatformsReady()) throw new WhopNotConfigured(action);
+  const base = process.env.WHOP_API_BASE ?? 'https://api.whop.com/api/v1';
+  const res = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.WHOP_COMPANY_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`Whop ${path} failed (${res.status}): ${await res.text().catch(() => '')}`);
+  }
+  return (await res.json()) as T;
+}
+
+/**
+ * Live API returns `purchase_url` absolute (`https://whop.com/checkout/plan_x/?session=ch_…`,
+ * verified 2026-07-29) even though the published docs show it relative. Normalise both.
+ */
+function absoluteCheckoutUrl(purchaseUrl: string | null | undefined): string | null {
+  if (!purchaseUrl) return null;
+  return purchaseUrl.startsWith('http') ? purchaseUrl : `${WHOP_CHECKOUT_ORIGIN}${purchaseUrl}`;
+}
+
+// SITE_URL, not an env read: NEXT_PUBLIC_BASE_URL is deliberately UNSET on Vercel, so
+// `process.env.X ?? fallback` would not be a fallback — it would silently BE the value.
+// Every URL here is handed to Whop and comes back as a user-facing redirect, so it has to be
+// the apex domain rather than a deployment alias. See src/lib/site.ts.
+function baseUrl(): string {
+  return SITE_URL;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Layer X — practitioner pays us to be listed
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-practitioner checkout for the existing monthly listing plan.
+ *
+ * Reuses WHOP_SUBSCRIPTION_PLAN_ID rather than creating pricing, so the price lives in exactly
+ * one place (the Whop dashboard) and can never drift. The point of this over the generic hosted
+ * product page is `metadata.practitioner_id`: it lets the webhook attribute the payment directly
+ * instead of matching on email, which silently fails when someone pays from a different address.
+ */
+export async function createSubscriptionCheckout(params: {
+  practitionerId: string;
+  slug: string;
+}): Promise<{ checkoutConfigId: string; purchaseUrl: string }> {
+  const planId = process.env.WHOP_SUBSCRIPTION_PLAN_ID;
+  if (!planId) throw new WhopNotConfigured('create subscription checkout (WHOP_SUBSCRIPTION_PLAN_ID unset)');
+
+  const cfg = await client('create subscription checkout').checkoutConfigurations.create({
+    mode: 'payment',
+    plan_id: planId,
+    metadata: { practitioner_id: params.practitionerId },
+    redirect_url: `${baseUrl()}/practitioners/${params.slug}/edit?subscription=success`,
+  });
+
+  const purchaseUrl = absoluteCheckoutUrl(cfg.purchase_url);
+  if (!purchaseUrl) throw new Error('Whop returned a checkout configuration with no purchase_url');
+  return { checkoutConfigId: cfg.id, purchaseUrl };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Layer Y — connected account lifecycle
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Create the practitioner's connected account under our platform company.
+ *
+ * NOT idempotent — Whop will happily mint a second company. Callers must guard on
+ * Practitioner.whopCompanyId inside the same transaction that persists the result.
+ */
+export async function createConnectedAccount(params: {
+  practitionerId: string;
+  slug: string;
+  displayName: string;
+  email: string;
+}): Promise<{ companyId: string }> {
+  const company = await client('create connected account').companies.create({
+    title: params.displayName,
+    email: params.email,
+    parent_company_id: process.env.WHOP_PARENT_COMPANY_ID!,
+    country: 'us',
+    // Whop sends patient receipts on the practitioner's behalf, so we build no transactional email.
+    send_customer_emails: true,
+    metadata: { practitioner_id: params.practitionerId, slug: params.slug },
+  });
+  return { companyId: company.id };
+}
+
+/**
+ * Mint a hosted Whop link — KYC onboarding, or the ongoing payouts portal.
+ * Links are short-lived; mint on demand and never persist one.
+ */
+export async function createAccountLink(params: {
+  companyId: string;
+  slug: string;
+  useCase: 'account_onboarding' | 'payouts_portal';
+}): Promise<{ url: string }> {
+  const link = await client('create account link').accountLinks.create({
+    company_id: params.companyId,
+    use_case: params.useCase,
+    return_url: `${baseUrl()}/api/whop/onboarding/return?slug=${encodeURIComponent(params.slug)}`,
+    refresh_url: `${baseUrl()}/api/whop/onboarding/refresh?slug=${encodeURIComponent(params.slug)}`,
+  });
+  return { url: link.url };
+}
+
+/**
+ * Reconciliation read for payout readiness.
+ *
+ * Deliberately conservative: the REST payout-account object exposes only the calculated `status`.
+ * The authoritative `payouts_enabled` boolean is delivered on identity_profile.* webhooks — a
+ * `connected` status paired with `payouts_enabled: false` is an active restriction, and this
+ * endpoint cannot see the difference. Use this to catch dropped webhooks, not as the gate.
+ */
+export async function getPayoutStatus(companyId: string): Promise<{ status: WhopPayoutStatus | null }> {
+  try {
+    const account = await client('read payout status').payoutAccounts.retrieve(companyId);
+    return { status: (account.status as WhopPayoutStatus | null) ?? null };
+  } catch (e) {
+    // A company with no payout account yet 404s ("This PayoutAccount was not found") — that is
+    // the normal pre-KYC state, not an error. Verified against the platform company 2026-07-29.
+    if (e && typeof e === 'object' && 'status' in e && (e as { status: number }).status === 404) {
+      return { status: null };
+    }
+    throw e;
+  }
+}
+
+/** List our connected accounts — the roster behind /admin/connected-accounts. */
+export async function listConnectedAccounts(): Promise<
+  Array<{ id: string; title: string; metadata: Record<string, unknown> | null }>
+> {
+  const page = await client('list connected accounts').companies.list({
+    parent_company_id: process.env.WHOP_PARENT_COMPANY_ID!,
+  });
+  return (page.data ?? []).map((c) => ({
+    id: c.id,
+    title: c.title,
+    metadata: (c.metadata as Record<string, unknown> | null) ?? null,
+  }));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Layer Y — offerings
+// ──────────────────────────────────────────────────────────────────────────────
+
+export type OfferingInterval = 'ONE_TIME' | 'MONTHLY' | 'ANNUAL';
+
+/**
+ * Publish an offering as a Whop checkout on the practitioner's connected account.
+ *
+ * One call creates product + plan + checkout configuration. Treat the result as derived and
+ * disposable: on any price/title edit, create a fresh configuration and swap the URL rather than
+ * mutating the plan — that stays correct if a platform fee is ever switched on, since the fee is
+ * a flat amount that has to be recomputed against the new price anyway.
+ *
+ * applicationFeeCents is plumbed but 0 today (operator decision 2026-07-29: revenue is the monthly
+ * subscription). 0 must OMIT the field — Whop requires the fee to be positive when present.
+ */
+export async function createOfferingCheckout(params: {
+  companyId: string;
+  offeringId: string;
+  practitionerId: string;
+  slug: string;
+  title: string;
+  priceUsdCents: number;
+  interval: OfferingInterval;
+  applicationFeeCents?: number;
+}): Promise<{ checkoutConfigId: string; planId: string | null; purchaseUrl: string }> {
+  const recurring = params.interval !== 'ONE_TIME';
+  const price = params.priceUsdCents / 100;
+  const fee = params.applicationFeeCents ?? 0;
+
+  const cfg = await whopPost<{
+    id: string;
+    plan?: { id?: string | null } | null;
+    purchase_url?: string | null;
+  }>(
+    '/checkout_configurations',
+    {
+      mode: 'payment',
+      plan: {
+        company_id: params.companyId,
+        currency: 'usd',
+        title: params.title,
+        plan_type: recurring ? 'renewal' : 'one_time',
+        initial_price: price,
+        ...(recurring && {
+          renewal_price: price,
+          billing_period: params.interval === 'MONTHLY' ? 30 : 365,
+        }),
+        // 0 must OMIT the field — Whop rejects a non-positive fee rather than treating it as free.
+        ...(fee > 0 && { application_fee_amount: fee / 100 }),
+        product: { title: params.title, external_identifier: params.offeringId },
+      },
+      metadata: { practitioner_id: params.practitionerId, offering_id: params.offeringId },
+      redirect_url: `${baseUrl()}/practitioners/${params.slug}?purchase=success`,
+    },
+    'publish offering',
+  );
+
+  const purchaseUrl = absoluteCheckoutUrl(cfg.purchase_url);
+  if (!purchaseUrl) throw new Error('Whop returned a checkout configuration with no purchase_url');
+  return { checkoutConfigId: cfg.id, planId: cfg.plan?.id ?? null, purchaseUrl };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Webhooks
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Two webhook registrations are required, not one: `child_resource_events` is EXCLUSIVE, not
+ * additive — per Whop, enabling it sends *only* sub-merchant events. So the platform company
+ * needs one webhook with it off (Layer X: our own memberships/payments) and one with it on
+ * (Layer Y: connected-account identity/payout/payment events). Each registration gets its own
+ * signing secret, so verification has to accept either.
+ */
+const webhookVerifiers = new Map<string, Whop>();
+
+function verifierFor(secret: string): Whop {
+  let v = webhookVerifiers.get(secret);
+  if (!v) {
+    v = new Whop({
+      apiKey: process.env.WHOP_COMPANY_API_KEY,
+      webhookKey: Buffer.from(secret).toString('base64'),
+      ...(process.env.WHOP_API_BASE ? { baseURL: process.env.WHOP_API_BASE } : {}),
+    });
+    webhookVerifiers.set(secret, v);
+  }
+  return v;
+}
+
+/**
+ * Verify + unwrap a v1 webhook (Standard Webhooks spec). Throws if no configured secret
+ * validates the signature. Both registrations post to the same route.
+ */
+export function unwrapWebhook(rawBody: string, headers: Record<string, string>): unknown {
+  const secrets = [
+    process.env.WHOP_V1_WEBHOOK_SECRET,
+    process.env.WHOP_V1_WEBHOOK_SECRET_CHILD,
+  ].filter((s): s is string => !!s);
+
+  if (secrets.length === 0) throw new WhopNotConfigured('verify webhook (no v1 webhook secret set)');
+
+  let lastError: unknown;
+  for (const secret of secrets) {
+    try {
+      return verifierFor(secret).webhooks.unwrap(rawBody, { headers });
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError;
 }

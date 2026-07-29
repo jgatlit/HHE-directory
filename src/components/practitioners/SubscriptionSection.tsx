@@ -21,7 +21,7 @@ type Props = {
    * them they're hidden from it.
    */
   isComplete: boolean;
-  /** Whop checkout URL for our $59/mo product; null until provisioned (Layer X wiring). */
+  /** Whop checkout URL for our $49/mo product; null until provisioned (Layer X wiring). */
   checkoutUrl: string | null;
   priceLabel: string;
 };
@@ -29,7 +29,7 @@ type Props = {
 /**
  * Layer X — the practitioner's platform-listing subscription (they pay us to be listed).
  * Listing state follows the 90-day trial clock, not the retired `comped` flag: `trialEndsAt`
- * null is pre-trial (still listed, kept quiet), a future date is a running trial (the $59/mo
+ * null is pre-trial (still listed, kept quiet), a future date is a running trial (the $49/mo
  * anchor lives here so the trial doesn't read as "free"), a past date is expired (subscribe to
  * restore — nothing is ever deleted). ACTIVE keeps its existing copy; PAST_DUE stays listed
  * through Whop's dunning grace and must never say "delisted". Admins are exempt outright — no

@@ -8,6 +8,12 @@ import { prisma } from '@/lib/prisma';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { syncSpecialtySynonyms } from '@/lib/typesense-synonyms';
 import { draftProfile, type DraftSpecialty } from '@/lib/onboarding-draft';
+import {
+  createAccountLink,
+  createConnectedAccount,
+  createOfferingCheckout,
+  createSubscriptionCheckout,
+} from '@/lib/whop';
 
 async function authorizeForSlug(slug: string) {
   const session = await auth();
@@ -679,4 +685,175 @@ export async function deleteOffering(slug: string, formData: FormData): Promise<
   revalidatePath(`/practitioners/${slug}`);
   revalidatePath(`/practitioners/${slug}/edit`);
   redirect(`/practitioners/${slug}/edit#offerings`);
+}
+
+// ---- Whop payments (Layer X subscription + Layer Y connected-account offerings) ----
+// Every Whop call below can throw (WhopNotConfigured, network, API error). redirect() itself
+// works by throwing, so each action does its Whop/DB work inside try/catch capturing a result
+// or error flag, then calls redirect() AFTER the try/catch — never inside it, or a success
+// would get caught by its own catch and reported back as a failure.
+
+export async function startSubscriptionCheckout(slug: string): Promise<void> {
+  const target = await authorizeForSlug(slug);
+
+  let redirectUrl: string | null = null;
+  try {
+    // Mint-once-and-reuse: never mint a second checkout config for the same practitioner.
+    const practitioner = await prisma.practitioner.findUnique({
+      where: { id: target.id },
+      select: { whopSubscriptionCheckoutUrl: true },
+    });
+    if (practitioner?.whopSubscriptionCheckoutUrl) {
+      redirectUrl = practitioner.whopSubscriptionCheckoutUrl;
+    } else {
+      const { purchaseUrl } = await createSubscriptionCheckout({ practitionerId: target.id, slug });
+      await prisma.practitioner.update({
+        where: { id: target.id },
+        data: { whopSubscriptionCheckoutUrl: purchaseUrl },
+      });
+      redirectUrl = purchaseUrl;
+    }
+  } catch (err) {
+    console.error('Whop subscription checkout failed:', err);
+  }
+
+  redirect(redirectUrl ?? `/practitioners/${slug}/edit?whop=error#payments`);
+}
+
+export async function startWhopOnboarding(slug: string): Promise<void> {
+  const target = await authorizeForSlug(slug);
+
+  let linkUrl: string | null = null;
+  try {
+    const practitioner = await prisma.practitioner.findUnique({
+      where: { id: target.id },
+      select: { displayName: true, whopCompanyId: true, user: { select: { email: true } } },
+    });
+
+    // companies.create is NOT idempotent — Whop will happily mint a second connected company
+    // for the same practitioner. Re-read whopCompanyId right here and only ever create when
+    // it's still unset, then persist the new id immediately (before minting the account link,
+    // which can itself fail) so a retry after a partial failure never creates a second one.
+    let companyId = practitioner?.whopCompanyId ?? null;
+    if (!companyId && practitioner?.user.email) {
+      const created = await createConnectedAccount({
+        practitionerId: target.id,
+        slug,
+        displayName: practitioner.displayName || slug,
+        email: practitioner.user.email,
+      });
+      companyId = created.companyId;
+      await prisma.practitioner.update({
+        where: { id: target.id },
+        data: { whopCompanyId: companyId, whopCompanyCreatedAt: new Date() },
+      });
+    }
+
+    if (companyId) {
+      const link = await createAccountLink({ companyId, slug, useCase: 'account_onboarding' });
+      linkUrl = link.url;
+    }
+  } catch (err) {
+    console.error('Whop onboarding failed:', err);
+  }
+
+  redirect(linkUrl ?? `/practitioners/${slug}/edit?whop=error#payments`);
+}
+
+export async function openPayoutPortal(slug: string): Promise<void> {
+  const target = await authorizeForSlug(slug);
+
+  let linkUrl: string | null = null;
+  try {
+    const practitioner = await prisma.practitioner.findUnique({
+      where: { id: target.id },
+      select: { whopCompanyId: true },
+    });
+    if (practitioner?.whopCompanyId) {
+      const link = await createAccountLink({
+        companyId: practitioner.whopCompanyId,
+        slug,
+        useCase: 'payouts_portal',
+      });
+      linkUrl = link.url;
+    }
+  } catch (err) {
+    console.error('Whop payout portal failed:', err);
+  }
+
+  redirect(linkUrl ?? `/practitioners/${slug}/edit?whop=error#payments`);
+}
+
+export async function publishOffering(slug: string, formData: FormData): Promise<void> {
+  const target = await authorizeForSlug(slug);
+  const offeringId = String(formData.get('offeringId') ?? '');
+
+  const [practitioner, offering] = await Promise.all([
+    prisma.practitioner.findUnique({
+      where: { id: target.id },
+      select: { whopCompanyId: true, whopPayoutsEnabled: true },
+    }),
+    // Ownership check, scoped by practitionerId — mirrors the updateMany scoping above; never
+    // trust the id alone.
+    prisma.whopProduct.findFirst({ where: { id: offeringId, practitionerId: target.id } }),
+  ]);
+  if (!practitioner || !offering) {
+    redirect(`/practitioners/${slug}/edit?error=offering-not-found#offerings`);
+  }
+
+  // HARD GATE, not advisory: letting a patient pay into an account that cannot withdraw is the
+  // worst possible failure, so no Whop call happens below until Whop itself has confirmed
+  // payouts are enabled for this practitioner.
+  if (!practitioner.whopPayoutsEnabled) {
+    redirect(`/practitioners/${slug}/edit?error=payouts-not-ready#offerings`);
+  }
+  if (!practitioner.whopCompanyId || offering.priceUsdCents <= 0) {
+    redirect(`/practitioners/${slug}/edit?error=offering-not-ready#offerings`);
+  }
+
+  let ok = false;
+  try {
+    const result = await createOfferingCheckout({
+      companyId: practitioner.whopCompanyId,
+      offeringId: offering.id,
+      practitionerId: target.id,
+      slug,
+      title: offering.title,
+      priceUsdCents: offering.priceUsdCents,
+      interval: offering.interval,
+      applicationFeeCents: offering.applicationFeeCents,
+    });
+    await prisma.whopProduct.update({
+      where: { id: offering.id },
+      data: {
+        whopCheckoutConfigId: result.checkoutConfigId,
+        whopPlanId: result.planId,
+        purchaseUrl: result.purchaseUrl,
+      },
+    });
+    ok = true;
+  } catch (err) {
+    console.error('Whop publish offering failed:', err);
+  }
+  if (!ok) redirect(`/practitioners/${slug}/edit?whop=error#offerings`);
+
+  revalidatePath(`/practitioners/${slug}`);
+  revalidatePath(`/practitioners/${slug}/edit`);
+  redirect(`/practitioners/${slug}/edit?saved=offering#offerings`);
+}
+
+export async function unpublishOffering(slug: string, formData: FormData): Promise<void> {
+  const target = await authorizeForSlug(slug);
+  const id = String(formData.get('offeringId') ?? '');
+  // No Whop call — there is no delete endpoint for a checkout configuration, it simply stops
+  // being surfaced once the public Buy button's fields are cleared.
+  if (id) {
+    await prisma.whopProduct.updateMany({
+      where: { id, practitionerId: target.id },
+      data: { whopCheckoutConfigId: null, whopPlanId: null, purchaseUrl: null },
+    });
+  }
+  revalidatePath(`/practitioners/${slug}`);
+  revalidatePath(`/practitioners/${slug}/edit`);
+  redirect(`/practitioners/${slug}/edit?saved=offering#offerings`);
 }

@@ -1,6 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Check, CreditCard, Clock, AlertCircle, X, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, AlertCircle, X, Sparkles } from 'lucide-react';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { isWhopPlatformsReady } from '@/lib/whop';
@@ -8,7 +8,6 @@ import { profileCompletenessSignals } from '@/lib/practitioner-indexer';
 import { isLlmConfigured } from '@/lib/onboarding-draft';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Badge } from '@/components/ui/badge';
 import {
   updatePractitioner,
   generateDraftAction,
@@ -16,9 +15,12 @@ import {
   createOffering,
   updateOffering,
   deleteOffering,
+  startWhopOnboarding,
+  openPayoutPortal,
 } from './actions';
 import { OfferingsEditor } from '@/components/practitioners/OfferingsEditor';
 import { SubscriptionSection } from '@/components/practitioners/SubscriptionSection';
+import { PaymentsSection } from '@/components/practitioners/PaymentsSection';
 import { BookingLinksField } from '@/components/practitioners/BookingLinksField';
 import { SpecialtyComboboxField } from '@/components/practitioners/SpecialtyComboboxField';
 import { PhotoUploadField } from '@/components/practitioners/PhotoUploadField';
@@ -26,7 +28,14 @@ import { AiDraftPanel } from '@/components/practitioners/AiDraftPanel';
 
 type Props = {
   params: { slug: string };
-  searchParams: { welcome?: string; saved?: string; error?: string; drafted?: string; source?: string };
+  searchParams: {
+    welcome?: string;
+    saved?: string;
+    error?: string;
+    drafted?: string;
+    source?: string;
+    whop?: string;
+  };
 };
 
 export const dynamic = 'force-dynamic';
@@ -99,6 +108,8 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const createOfferingAction = createOffering.bind(null, params.slug);
   const updateOfferingAction = updateOffering.bind(null, params.slug);
   const deleteOfferingAction = deleteOffering.bind(null, params.slug);
+  const startWhopOnboardingAction = startWhopOnboarding.bind(null, params.slug);
+  const openPayoutPortalAction = openPayoutPortal.bind(null, params.slug);
 
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-14">
@@ -442,8 +453,8 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           trialEndsAt={practitioner.trialEndsAt}
           isAdmin={ownerIsAdmin}
           isComplete={missing.length === 0}
-          checkoutUrl={process.env.WHOP_PLATFORM_CHECKOUT_URL ?? null}
-          priceLabel="$59/mo"
+          checkoutUrl={practitioner.whopSubscriptionCheckoutUrl ?? process.env.WHOP_PLATFORM_CHECKOUT_URL ?? null}
+          priceLabel="$49/mo"
         />
 
         <OfferingsEditor
@@ -461,9 +472,14 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
         />
 
         <PaymentsSection
-          kycStatus={practitioner.whopKycStatus}
-          productCount={practitioner.whopProducts.length}
-          platformsReady={isWhopPlatformsReady()}
+          slug={params.slug}
+          whopCompanyId={practitioner.whopCompanyId}
+          payoutStatus={practitioner.whopPayoutStatus}
+          payoutsEnabled={practitioner.whopPayoutsEnabled}
+          platformReady={isWhopPlatformsReady()}
+          whopParam={searchParams.whop}
+          startWhopOnboardingAction={startWhopOnboardingAction}
+          openPayoutPortalAction={openPayoutPortalAction}
         />
 
         <p className="text-center text-xs text-muted-foreground">
@@ -472,150 +488,6 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
         </p>
       </div>
     </main>
-  );
-}
-
-function PaymentsSection({
-  kycStatus,
-  productCount,
-  platformsReady,
-}: {
-  kycStatus: 'NOT_STARTED' | 'PENDING' | 'VERIFIED' | 'REJECTED';
-  productCount: number;
-  platformsReady: boolean;
-}) {
-  return (
-    <Card className="space-y-4 p-6 sm:p-8">
-      <div className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
-          <CreditCard className="h-4 w-4 text-muted-foreground" aria-hidden />
-        </span>
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Payments</h2>
-            <StatusBadge kycStatus={kycStatus} platformsReady={platformsReady} />
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Accept payments for sessions, packages, and memberships via Whop&apos;s multi-tenant
-            payments platform.
-          </p>
-        </div>
-      </div>
-
-      <Separator />
-
-      {!platformsReady && (
-        <div className="space-y-2">
-          <p className="flex items-start gap-2 text-xs text-muted-foreground">
-            <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span>
-              Whop Platforms access is pending. HHE is applying for Whop&apos;s multi-tenant
-              payments product (sub-merchant Connected Accounts). Once granted, you&apos;ll be able
-              to set up your payout account, add offerings (intro consults, memberships,
-              packages), and patients can pay directly.
-            </span>
-          </p>
-          <button
-            type="button"
-            disabled
-            className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md border bg-muted/40 text-xs font-medium text-muted-foreground"
-          >
-            Connect with Whop · Coming soon
-          </button>
-          {productCount > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {productCount} offering{productCount === 1 ? '' : 's'} already configured (will go
-              live once Whop verification completes).
-            </p>
-          )}
-        </div>
-      )}
-
-      {platformsReady && kycStatus === 'NOT_STARTED' && (
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            Connect your payout account. Whop handles identity verification, tax forms, and
-            payouts — you receive funds directly from each patient.
-          </p>
-          <button
-            type="button"
-            className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-primary text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Connect with Whop
-          </button>
-        </div>
-      )}
-
-      {platformsReady && kycStatus === 'PENDING' && (
-        <p className="text-xs text-muted-foreground">
-          Whop is reviewing your account. This typically takes 1–2 business days. You&apos;ll get
-          an email when verification completes.
-        </p>
-      )}
-
-      {platformsReady && kycStatus === 'VERIFIED' && (
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            Your payout account is active. Add offerings below to start accepting payments.
-          </p>
-          <button
-            type="button"
-            className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-primary text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Add an offering
-          </button>
-        </div>
-      )}
-
-      {platformsReady && kycStatus === 'REJECTED' && (
-        <p className="text-xs text-destructive">
-          Whop declined account verification. Contact HHE support.
-        </p>
-      )}
-    </Card>
-  );
-}
-
-function StatusBadge({
-  kycStatus,
-  platformsReady,
-}: {
-  kycStatus: string;
-  platformsReady: boolean;
-}) {
-  if (!platformsReady) {
-    return (
-      <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
-        Pending access
-      </Badge>
-    );
-  }
-  if (kycStatus === 'NOT_STARTED') {
-    return (
-      <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
-        Not connected
-      </Badge>
-    );
-  }
-  if (kycStatus === 'PENDING') {
-    return (
-      <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
-        Verifying
-      </Badge>
-    );
-  }
-  if (kycStatus === 'VERIFIED') {
-    return (
-      <Badge variant="default" className="gap-1 text-[10px] uppercase tracking-wider">
-        <Check className="h-3 w-3" />
-        Active
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="destructive" className="text-[10px] uppercase tracking-wider">
-      Rejected
-    </Badge>
   );
 }
 

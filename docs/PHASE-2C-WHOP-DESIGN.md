@@ -1,5 +1,13 @@
 # Phase 2C — Whop Platforms architecture (designed, scaffolded, gated on access)
 
+> 🛑 **SUPERSEDED 2026-07-29 by [`docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md`](./PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md). Do not build from this file.**
+>
+> Its central premise is wrong: **Whop for Platforms is NOT invite-only** — "Platforms" and "Connected Accounts" are the same self-serve product, and `parent_company_id` is a documented optional field on the public create-company endpoint. The real blocker was always an API-key *scope/class* problem, fixable in the dashboard.
+>
+> Several API shapes below are also wrong: product/plan/checkout is **one** call not three; the Company object has **no** `kyc_status` or `payouts_enabled` field (readiness lives on the identity profile); webhooks use the Standard Webhooks spec, not hand-rolled HMAC; and the platform SDK is `@whop/sdk`, not the installed `@whop/api`.
+>
+> Retained as a point-in-time record of the 2026-05-25 decision context only.
+
 > **Status as of 2026-05-25**: design + schema + lib + UI placeholders shipped. Live API integration paused pending Whop for Platforms API access (operator-side action via `sales@whop.com`). When access lands, swap the placeholder no-ops in `src/lib/whop.ts` for the real client calls; everything else is wired.
 
 ## Decision context

@@ -24,7 +24,7 @@ Prod: **https://naturalhealthpros.com** (LIVE over HTTPS since 2026-07-15) · al
 - **Profile**: name, headline, bio, who-I-help, **photo upload**, website, telehealth/in-person, city, years, specialties. "Regenerate with AI" re-drafts from a description.
 - **Offerings**: add / edit / remove — name · description · price · one-time vs monthly · category. Shown on your public page. *(Online checkout for these = Layer Y, coming with Whop Platforms.)*
 - **Booking links**: your scheduling URLs (Cal.com / Calendly / SavvyCal / Acuity…).
-- **Directory listing**: **Subscribe · $59/mo** → Whop checkout → once paid you're listed in search. Pilots show **"Complimentary"** and are listed free.
+- **Directory listing**: **Subscribe · $49/mo** (first 30-day period is free, then $49/mo) → Whop checkout → once paid you're listed in search. Pilots show **"Complimentary"** and are listed free.
 
 ## 4. Public / patient flow
 - **`/`** — featured practitioners + search entry.
@@ -35,5 +35,5 @@ Prod: **https://naturalhealthpros.com** (LIVE over HTTPS since 2026-07-15) · al
 A practitioner shows in **search + featured** only when their profile is **complete** (name + city + bio ≥20 chars + ≥1 specialty) **AND** (`comped` **OR** subscription `ACTIVE`). Direct profile links always resolve, listed or not.
 
 ## Payments at a glance
-- **Layer X** (LIVE): practitioner pays **$59/mo** to be listed → our Whop → `/api/whop/webhook` flips them to ACTIVE. Config: `docs/LAYER-X-SUBSCRIPTION.md`.
+- **Layer X** (LIVE): practitioner pays **$49/mo** to be listed (first 30-day period free) → our Whop → `/api/whop/webhook` flips them to ACTIVE. Config: `docs/LAYER-X-SUBSCRIPTION.md`.
 - **Layer Y** (deferred): patients pay practitioners for their offerings via connected Whop accounts — gated on the invite-only Whop Platforms grant.
