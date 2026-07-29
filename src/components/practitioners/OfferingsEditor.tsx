@@ -1,4 +1,5 @@
-import { Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Plus, Trash2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
@@ -9,6 +10,9 @@ type Offering = {
   priceUsdCents: number;
   interval: 'ONE_TIME' | 'MONTHLY' | 'ANNUAL';
   category: string | null;
+  /** Set only once publishOffering() has minted a live Whop checkout — doubles as the
+   *  published/unpublished flag, so no separate status field is needed. */
+  purchaseUrl: string | null;
 };
 
 type Action = (formData: FormData) => void | Promise<void>;
@@ -26,21 +30,29 @@ const CATEGORY_SUGGESTIONS = [
 const dollars = (cents: number) => (cents > 0 ? (cents / 100).toString() : '');
 
 /**
- * Practitioner offerings editor (Phase 2). Offerings are stored locally (WhopProduct);
- * online checkout is wired in Layer Y. Each row is one <form> whose Save button posts to
- * updateAction and whose Remove button overrides via formAction=deleteAction (so there are
- * no nested forms). A separate add form appends a new offering.
+ * Practitioner offerings editor (Phase 2 + Layer Y publish). Offerings are stored locally
+ * (WhopProduct); publishOffering()/unpublishOffering() mint or clear the live Whop checkout.
+ * Each row is one <form> whose Save button posts to updateAction; Remove, Publish, and
+ * Unpublish all override via formAction the same way (so there are no nested forms — a
+ * <form> inside a <form> is invalid HTML and browsers hoist the inner one's fields out of
+ * it, breaking the row). A separate add form appends a new offering.
  */
 export function OfferingsEditor({
   offerings,
+  payoutsEnabled,
   createAction,
   updateAction,
   deleteAction,
+  publishAction,
+  unpublishAction,
 }: {
   offerings: Offering[];
+  payoutsEnabled: boolean;
   createAction: Action;
   updateAction: Action;
   deleteAction: Action;
+  publishAction: Action;
+  unpublishAction: Action;
 }) {
   return (
     <Card id="offerings" className="scroll-mt-8 space-y-5 p-6 sm:p-8">
@@ -48,8 +60,8 @@ export function OfferingsEditor({
         <h2 className="text-sm font-semibold">Offerings</h2>
         <p className="text-xs text-muted-foreground">
           Consultations, sessions, packages, products, subscriptions — name them and set your own
-          prices. They show on your profile now; online checkout turns on once your Whop payments
-          account is connected. Until then, clients reach you via your booking link.
+          prices. They show on your profile now; publish any offering to turn on online checkout,
+          or leave it unpublished and clients still reach you via your booking link.
         </p>
       </div>
 
@@ -60,6 +72,12 @@ export function OfferingsEditor({
               <form action={updateAction} className="space-y-3">
                 <input type="hidden" name="offeringId" value={o.id} />
                 <OfferingFields offering={o} idPrefix={o.id} />
+                <PublishRow
+                  offering={o}
+                  payoutsEnabled={payoutsEnabled}
+                  publishAction={publishAction}
+                  unpublishAction={unpublishAction}
+                />
                 <div className="flex items-center justify-end gap-2">
                   <button
                     formAction={deleteAction}
@@ -101,6 +119,68 @@ export function OfferingsEditor({
         </div>
       </form>
     </Card>
+  );
+}
+
+/**
+ * Publish/unpublish control for one offering row. Plain markup, NOT its own <form> — it
+ * lives inside the row's single <form action={updateAction}>, and its buttons reach
+ * publishAction/unpublishAction via formAction exactly the way Remove reaches deleteAction.
+ */
+function PublishRow({
+  offering,
+  payoutsEnabled,
+  publishAction,
+  unpublishAction,
+}: {
+  offering: Offering;
+  payoutsEnabled: boolean;
+  publishAction: Action;
+  unpublishAction: Action;
+}) {
+  if (offering.purchaseUrl) {
+    return (
+      <div className="flex items-center justify-between gap-3 border-t pt-3">
+        <Badge variant="secondary" className="gap-1 text-[10px] uppercase tracking-wider">
+          <CheckCircle2 className="h-3 w-3" aria-hidden />
+          Live — patients can buy this
+        </Badge>
+        <button
+          formAction={unpublishAction}
+          formNoValidate
+          className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Unpublish
+        </button>
+      </div>
+    );
+  }
+
+  if (payoutsEnabled) {
+    return (
+      <div className="flex items-center justify-between gap-3 border-t pt-3">
+        <p className="text-xs text-muted-foreground">Not published — only you can see this.</p>
+        <button
+          formAction={publishAction}
+          formNoValidate
+          className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          Publish
+        </button>
+      </div>
+    );
+  }
+
+  // An offering without online checkout is a legitimate state, not an error — keep this
+  // matter-of-fact rather than a dead disabled button with no explanation.
+  return (
+    <p className="border-t pt-3 text-xs text-muted-foreground">
+      Set up payouts to sell this online — see{' '}
+      <a href="#payments" className="font-medium underline underline-offset-2 hover:text-foreground">
+        Patient payments
+      </a>{' '}
+      below. Bookings still work via your booking link either way.
+    </p>
   );
 }
 

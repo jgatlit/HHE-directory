@@ -31,7 +31,10 @@
     "probe:search": "tsx --env-file=.env scripts/probe-search-uptime.ts",
     "postinstall": "prisma generate",
     "taglines:backfill": "tsx --env-file=.env scripts/backfill-taglines.ts",
-    "links:audit": "tsx --env-file=.env scripts/audit-profile-links.ts"
+    "links:audit": "tsx --env-file=.env scripts/audit-profile-links.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "whop:health": "tsx --env-file=.env scripts/whop-health.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",
@@ -77,6 +80,7 @@
     "prisma": "^6.19.3",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.22.3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   }
 }
