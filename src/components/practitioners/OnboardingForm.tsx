@@ -1,7 +1,7 @@
-import { Sparkles } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { SpecialtyComboboxField } from '@/components/practitioners/SpecialtyComboboxField';
+import { OnboardingSubmitButton } from '@/components/practitioners/OnboardingSubmitButton';
 
 type Props = {
   action: (formData: FormData) => void | Promise<void>;
@@ -139,13 +139,7 @@ export function OnboardingForm({
             <Separator />
 
             <div className="flex flex-col gap-3">
-              <button
-                type="submit"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                <Sparkles className="h-4 w-4" aria-hidden />
-                {isPrefilled ? 'Regenerate my page' : 'Generate my page'}
-              </button>
+              <OnboardingSubmitButton isPrefilled={isPrefilled} />
               <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
                 {llmConfigured
                   ? 'AI drafts your headline, bio, and highlights from your description.'
