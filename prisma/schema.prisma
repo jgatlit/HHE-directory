@@ -141,12 +141,25 @@ model Practitioner {
   // migration on the shared Neon DB; data copied into BookingLink. Drop in a follow-up.
   bookingUrl   String?
 
-  // Wedge 2C — Whop Platforms sub-merchant (Connected Account)
-  // whopCompanyId is the practitioner's sub-merchant company on HHE's Whop platform parent.
-  // KYC + payouts handled by Whop; HHE collects an application_fee per checkout (see WhopProduct).
+  // Wedge 2C — Whop Connected Account (Layer Y: patient → practitioner)
+  // whopCompanyId is the practitioner's connected company under WHOP_PARENT_COMPANY_ID.
+  // KYC + payouts are handled by Whop's hosted flows; see docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md.
   whopCompanyId      String?       @unique
+  /// DEPRECATED — 4-state enum cannot represent Whop's 9 payout statuses. Superseded by
+  /// whopPayoutStatus + whopPayoutsEnabled. Retained one release per expand/contract; the
+  /// migration applies while the PREVIOUS deploy still serves traffic, so this must not vanish
+  /// until nothing reads it. Drop in a follow-up.
   whopKycStatus      WhopKycStatus @default(NOT_STARTED)
   whopKycCompletedAt DateTime?
+  /// Whop's calculated payout status. Deliberately String, NOT a Prisma enum: an unrecognised
+  /// value from Whop would make the enum write throw inside a webhook handler, and Whop retries
+  /// only 3 times over ~70s before dropping the event permanently.
+  whopPayoutStatus      String    @default("not_started")
+  /// THE gate for public checkout. Authoritative only via identity_profile.* webhooks — the REST
+  /// payout-account object exposes status but not this boolean, so it cannot be polled reliably.
+  whopPayoutsEnabled    Boolean   @default(false)
+  whopIdentityProfileId String?
+  whopCompanyCreatedAt  DateTime?
   whopProducts       WhopProduct[]
 
   // Layer X — platform subscription (practitioner pays $59/mo to be listed; pilots trial for 90 days)
@@ -161,6 +174,10 @@ model Practitioner {
   /// from a seed date. Admins are exempt from it entirely.
   trialEndsAt        DateTime?
   whopMembershipId   String?            @unique // membership on our own $59/mo Whop product
+  /// Per-practitioner checkout for the monthly listing plan, minted once and reused. Carries
+  /// metadata.practitioner_id so the webhook attributes payment directly instead of matching on
+  /// email — which silently fails when someone pays from a different address than their profile.
+  whopSubscriptionCheckoutUrl String?
 
   // Invite-only model (5/15 Amy reframe)
   invitedBy  String?

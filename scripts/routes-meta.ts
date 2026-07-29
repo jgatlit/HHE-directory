@@ -103,15 +103,39 @@ export const ROUTE_META: Record<string, RouteMeta> = {
   },
   '/admin/connected-accounts': {
     description:
-      '<strong>Whop sub-merchant lifecycle.</strong> 5-cell summary strip (Total / Verified / Pending / Not-started / Rejected) + sorted list per practitioner with KYC status badge + product count. Will populate once Whop Platforms access is granted; currently all NOT_STARTED.',
+      '<strong>Whop connected-account lifecycle + reconciliation.</strong> Per-practitioner payout status (Whop&rsquo;s raw <code>payout_status</code>) and the authoritative <code>payouts_enabled</code> gate, sorted so restricted accounts (<code>connected</code> but not payouts-enabled) surface first. Also joins the live <code>GET /companies?parent_company_id=</code> roster against local rows to surface drift in both directions — webhooks retry only ~70s before dropping events, so drift is expected and this is what catches it. Degrades to the local table if Whop is unreachable.',
     audience: 'admin',
-    status: 'scaffold',
+    status: 'live',
   },
   '/admin/whop-webhooks': {
     description:
       '<strong>Webhook event log.</strong> Last 100 WhopWebhookEvent rows ordered by receivedAt desc. Empty today; lists the 8 expected event types (company.created, account.verified, payment.succeeded, payout.paid, etc.) in a &lt;details&gt; element while empty.',
     audience: 'admin',
     status: 'scaffold',
+  },
+  '/api/whop/webhook': {
+    description:
+      '<strong>Legacy Whop webhook receiver (Layer X).</strong> Live — drives the $49/mo listing subscription: verifies via <code>@whop/api</code>&rsquo;s <code>makeWebhookValidator</code>, flips <code>subscriptionStatus</code>, re-runs the listing gate. <strong>Scheduled for retirement</strong> — <code>@whop/api</code> is deprecated on npm and this handler speaks the old <code>{action,data}</code> shape. Delete once the v1 registrations are observed delivering, then <code>npm rm @whop/api</code>. See docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md §6a step A5.',
+    audience: 'api',
+    status: 'live',
+  },
+  '/api/whop/webhook/v1': {
+    description:
+      '<strong>Whop API v1 webhook receiver.</strong> Standard Webhooks signature verification, deduped on the <code>webhook-id</code> header. Handles <code>identity_profile.*</code> and <code>payout_account.status_updated</code> (payout readiness &rarr; reindex) plus <code>payment.succeeded</code>. Two Whop registrations post here — one for the platform company, one for connected accounts (<code>child_resource_events</code> is exclusive, not additive) — so either signing secret validates. Fails closed with 503 until a secret is set; always 2xx otherwise, because Whop drops events after 3 retries (~70s). Runs ALONGSIDE the legacy /api/whop/webhook.',
+    audience: 'api',
+    status: 'live',
+  },
+  '/api/whop/onboarding/return': {
+    description:
+      '<strong>Whop KYC return redirect.</strong> Auth + ownership gated. Best-effort ONLY — it fires the moment the practitioner submits the hosted form, before the provider approves, so it never sets <code>whopPayoutsEnabled</code>; the <code>identity_profile.approved</code> webhook is authoritative. Opportunistically refreshes <code>whopPayoutStatus</code>, and a failed refresh is non-fatal.',
+    audience: 'auth',
+    status: 'live',
+  },
+  '/api/whop/onboarding/refresh': {
+    description:
+      '<strong>Whop account-link refresh.</strong> Auth + ownership gated. Whop redirects here when a short-lived account link expires mid-flow; re-mints a fresh <code>account_onboarding</code> link and bounces straight back into the hosted KYC form.',
+    audience: 'auth',
+    status: 'live',
   },
   '/api/auth/[...nextauth]': {
     description:
@@ -129,33 +153,9 @@ export const ROUTE_META: Record<string, RouteMeta> = {
  * corresponding file is created.
  */
 export const PLANNED_API_ROUTES: Array<{ path: string; meta: RouteMeta }> = [
-  {
-    path: '/api/whop/webhook',
-    meta: {
-      description:
-        '<strong>Whop webhook receiver.</strong> Designed in docs/PHASE-2C-WHOP-DESIGN.md but not yet implemented. Will verify HMAC + dedupe via whopEventId + persist to WhopWebhookEvent + process by eventType.',
-      audience: 'api',
-      status: 'not-yet',
-    },
-  },
-  {
-    path: '/api/whop/onboarding/start',
-    meta: {
-      description:
-        '<strong>Whop sub-merchant onboarding kickoff.</strong> Designed; will create the sub-merchant + KYC link. Gated on Whop for Platforms API access.',
-      audience: 'api',
-      status: 'not-yet',
-    },
-  },
-  {
-    path: '/api/whop/onboarding/return',
-    meta: {
-      description:
-        '<strong>Whop sub-merchant onboarding return.</strong> Receives the KYC completion redirect. Updates Practitioner.whopKycStatus optimistically; webhook is authoritative.',
-      audience: 'api',
-      status: 'not-yet',
-    },
-  },
+  // /api/whop/onboarding/start was never built as a route — enrolment is the startWhopOnboarding
+  // server action instead, so there is no endpoint to plan for. /return and /refresh now exist
+  // and have live ROUTE_META entries above.
 ];
 
 export const AUDIENCE_LABELS: Record<Audience, { title: string; intro: string }> = {

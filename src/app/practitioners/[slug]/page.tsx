@@ -170,14 +170,29 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                             </span>
                           )}
                         </div>
-                        {o.priceUsdCents > 0 && (
-                          <p className="shrink-0 text-sm font-semibold">
-                            {formatPrice(o.priceUsdCents)}
-                            {o.interval === 'MONTHLY' && (
-                              <span className="text-xs font-normal text-muted-foreground">/mo</span>
-                            )}
-                          </p>
-                        )}
+                        <div className="flex shrink-0 flex-col items-end gap-2">
+                          {o.priceUsdCents > 0 && (
+                            <p className="text-sm font-semibold">
+                              {formatPrice(o.priceUsdCents)}
+                              {o.interval === 'MONTHLY' && (
+                                <span className="text-xs font-normal text-muted-foreground">/mo</span>
+                              )}
+                            </p>
+                          )}
+                          {/* Only offerings published to Whop carry a purchaseUrl — practitioners can
+                              list an offering without online payment, and that stays unbuttoned rather
+                              than broken-looking. */}
+                          {o.purchaseUrl && (
+                            <a
+                              href={o.purchaseUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex h-8 items-center justify-center rounded-md bg-cta px-3 text-xs font-semibold text-cta-foreground transition-opacity hover:opacity-90"
+                            >
+                              {o.interval === 'ONE_TIME' ? 'Book' : 'Subscribe'}
+                            </a>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
