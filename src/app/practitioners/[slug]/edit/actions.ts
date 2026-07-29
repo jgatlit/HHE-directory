@@ -13,6 +13,7 @@ import {
   createConnectedAccount,
   createOfferingCheckout,
   createSubscriptionCheckout,
+  WHOP_OFFERING_TITLE_MAX,
 } from '@/lib/whop';
 
 async function authorizeForSlug(slug: string) {
@@ -809,6 +810,12 @@ export async function publishOffering(slug: string, formData: FormData): Promise
   }
   if (!practitioner.whopCompanyId || offering.priceUsdCents <= 0) {
     redirect(`/practitioners/${slug}/edit?error=offering-not-ready#offerings`);
+  }
+  // Whop 422s the whole checkout-config create over this (verified live 2026-07-29) — catch it
+  // here with a specific, actionable redirect instead of letting it fall into the generic
+  // Whop-error banner below, which gives the practitioner no idea what to fix.
+  if (offering.title.length > WHOP_OFFERING_TITLE_MAX) {
+    redirect(`/practitioners/${slug}/edit?error=offering-title-too-long#offerings`);
   }
 
   let ok = false;
