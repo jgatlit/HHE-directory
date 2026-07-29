@@ -58,6 +58,19 @@ Worth listing explicitly, because the scaffold in `src/lib/whop.ts` encodes all 
 
 Also newly available and not in the old doc: a **sandbox** (`https://sandbox-api.whop.com/api/v1`), and **child company API keys** (`POST /companies/{parent_company_id}/api_keys`).
 
+### 2.3 🚨 Live bug found + fixed 2026-07-29 — `plan.title` capped at 30 chars, silently failed the whole publish
+
+First real practitioner-side test (post-KYC, publishing an offering) hit: **"Offering published but NO checkout link on profile page."** Root-caused by replaying the exact `createOfferingCheckout()` request against the real connected account:
+
+```
+plan.title = "Business Process Automation Audit" (34 chars)
+→ 400 "Failed to create dynamic plan: Validation failed: Title is too long (maximum is 30 characters)"
+```
+
+Isolated field-by-field: `plan.title` caps at **30 chars**; `product.title` is a *separate* field capping at **80 chars**. `publishOffering()`'s catch-all swallowed this into a generic `?whop=error#offerings` banner with zero indication of *why* — a title over 30 chars silently failed the entire publish for any practitioner, a very plausible offering-title length in this directory.
+
+**Fix — omit `plan.title` entirely**, verified live: the real Layer X plan (`plan_5YdWsNzoCg3Z3`) already ships with `title: null` and displays via `product.title`, so nothing customer-facing is lost. `product.title` (unbounded on our side) is the one actually shown to the buyer, so `publishOffering()` now pre-checks `offering.title.length <= 80` (`WHOP_OFFERING_TITLE_MAX` in `src/lib/whop.ts`) and redirects with a specific, actionable error (`?error=offering-title-too-long`) instead of the generic catch-all. Client-side `maxLength={80}` added to the title input as an earlier guard.
+
 ### 2.1 Does `@whop/sdk` fully replace `@whop/api`? — **Yes. Validated 2026-07-29.**
 
 | | `@whop/api` (installed) | `@whop/sdk` (added) |

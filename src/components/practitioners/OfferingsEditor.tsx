@@ -192,6 +192,7 @@ function OfferingFields({ offering, idPrefix }: { offering: Offering | null; idP
           type="text"
           name="title"
           required
+          maxLength={80}
           defaultValue={offering?.title ?? ''}
           placeholder="e.g. 60-min initial consultation"
           className="h-9 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"

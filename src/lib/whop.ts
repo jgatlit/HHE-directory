@@ -225,6 +225,13 @@ export async function listConnectedAccounts(): Promise<
 export type OfferingInterval = 'ONE_TIME' | 'MONTHLY' | 'ANNUAL';
 
 /**
+ * Whop's product title cap — verified live 2026-07-29 (a 84-char title 422'd with exactly this
+ * message). publishOffering() checks this BEFORE calling Whop so a long title fails with a
+ * specific, actionable redirect instead of the generic Whop-error catch-all.
+ */
+export const WHOP_OFFERING_TITLE_MAX = 80;
+
+/**
  * Publish an offering as a Whop checkout on the practitioner's connected account.
  *
  * One call creates product + plan + checkout configuration. Treat the result as derived and
@@ -233,7 +240,16 @@ export type OfferingInterval = 'ONE_TIME' | 'MONTHLY' | 'ANNUAL';
  * a flat amount that has to be recomputed against the new price anyway.
  *
  * applicationFeeCents is plumbed but 0 today (operator decision 2026-07-29: revenue is the monthly
- * subscription). 0 must OMIT the field — Whop requires the fee to be positive when present.
+ * subscription). 0 must OMIT the field — Whop rejects the fee unless positive when present.
+ *
+ * plan.title is DELIBERATELY OMITTED — Whop caps it at 30 chars (verified live 2026-07-29; a
+ * 34-char title 400'd the ENTIRE checkout-configuration create, so the whole publish failed
+ * silently for any offering with a title over 30 characters — plausible for real practitioner
+ * copy, e.g. "Business Process Automation Audit"). plan.title is not customer-facing: the real
+ * Layer X plan (plan_5YdWsNzoCg3Z3) ships with title:null and relies on product.title for
+ * display, and omitting it here was confirmed live to succeed with the exact title that
+ * previously failed. product.title carries the real name to the buyer and caps at 80 chars
+ * (also verified live) — see WHOP_OFFERING_TITLE_MAX above.
  */
 export async function createOfferingCheckout(params: {
   companyId: string;
@@ -260,7 +276,6 @@ export async function createOfferingCheckout(params: {
       plan: {
         company_id: params.companyId,
         currency: 'usd',
-        title: params.title,
         plan_type: recurring ? 'renewal' : 'one_time',
         initial_price: price,
         ...(recurring && {

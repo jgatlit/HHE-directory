@@ -247,6 +247,14 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             </p>
           </Card>
         )}
+        {searchParams.error === 'offering-title-too-long' && (
+          <Card className="border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive">
+              That offering&apos;s title is too long to publish — shorten it to 80 characters or
+              fewer and try again.
+            </p>
+          </Card>
+        )}
 
         <Card className="p-6 sm:p-8">
           <form action={action} className="space-y-5">
