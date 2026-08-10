@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
+export const dynamic = 'force-dynamic';
+
 function initials(name: string) {
   return name
     .replace(/^Dr\.\s+/i, '')
@@ -34,8 +36,10 @@ async function getCompletePractitionerCount() {
 }
 
 export default async function Home() {
-  const featured = await getFeaturedPractitioners();
-  const totalCount = await getCompletePractitionerCount();
+  const [featured, totalCount] = await Promise.all([
+    getFeaturedPractitioners(),
+    getCompletePractitionerCount(),
+  ]);
 
   return (
     <main className="min-h-screen bg-muted/30">
@@ -96,9 +100,22 @@ export default async function Home() {
                   <Link href={`/practitioners/${p.slug}`} className="group block h-full">
                     <Card className="flex h-full flex-col gap-3 p-4 transition-colors group-hover:bg-accent/30">
                       <Avatar size="lg" className="size-14 ring-1 ring-border">
-                        <AvatarFallback className="text-base font-medium">
-                          {initials(p.displayName)}
-                        </AvatarFallback>
+                        {p.photoUrl ? (
+                          // Plain <img>, as on /search and the profile hero. base-ui's
+                          // AvatarImage only mounts once a client-side load check resolves,
+                          // so it emits no <img> server-side — on this page that would leave
+                          // every photo to hydration and show initials to non-JS crawlers.
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={p.photoUrl}
+                            alt={p.displayName}
+                            className="aspect-square size-full rounded-full object-cover"
+                          />
+                        ) : (
+                          <AvatarFallback className="text-base font-medium">
+                            {initials(p.displayName)}
+                          </AvatarFallback>
+                        )}
                       </Avatar>
                       <div className="space-y-1">
                         <p className="text-sm font-semibold leading-tight">{p.displayName}</p>
