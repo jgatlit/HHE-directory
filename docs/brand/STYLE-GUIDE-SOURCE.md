@@ -59,6 +59,29 @@ The `.dark` block in `globals.css` is still **default shadcn zinc/neutral**, not
 currently inert (nothing sets the `.dark` class, and there is no theme toggle), so this is latent
 rather than live. Any build that introduces a theme toggle must brand `.dark` first.
 
+## ⚠️ There are now TWO CMS projects — read this before pulling tokens
+
+As of 2026-08-10 the CMS registry holds two projects for this product, both at **9/9** completeness.
+They are independent: separate Penpot projects, separate Stitch projects, no shared IDs.
+
+| Project | Tokens | Provenance | Use for |
+|---|---|---|---|
+| **`hhe-directory`** | 117 | Synthesized from the upstream `holistichealtheducators` + `holistic-health-practitioners` projects (2026-05-29) | **Canonical today.** It is what `globals.css` descends from, and the shipped landing page consumes its gradient/shadow tokens verbatim. |
+| **`naturalhealthpros`** | 106 | `vision-extract` run directly against the live `naturalhealthpros.com` | Cleaner provenance — derived from the product itself, with no inherited lineage. Runs under the correct post-rebrand name. |
+
+**Why both exist:** an A/B was run — one arm building from the inherited tokens, one clean-room arm
+deriving them from the live site. **The clean-room extraction reproduced the deployed palette
+faithfully**, which is the useful result: the CMS design system and the shipped product genuinely
+agree, so the legacy lineage is not load-bearing.
+
+**Recommendation if the lineage is ever severed:** `naturalhealthpros` is the better foundation —
+same brand, honest provenance, correct name. Until someone makes that call, **`hhe-directory`
+remains canonical** and this document's token table reflects it.
+
+Sandboxes from that A/B (not in this repo): `~/projects/HHE/nhp-frontier-sandbox/` (lineage arm —
+shipped as PR #42, has a file-by-file port `README.md`) and `~/projects/HHE/nhp-cleanroom-sandbox/`
+(clean-room arm, `screenshots/`).
+
 ## Pipeline state (frontier-UX)
 
 Per `SOP — frontier-UX Pipeline` (nobox-vault `art_f9b86d2b77af48fda852`):
