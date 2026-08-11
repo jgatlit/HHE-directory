@@ -140,6 +140,15 @@ Two claims in it are false, and the accurate versions are stronger:
 
 ---
 
+---
+
+## Deferred enhancements (not defects)
+
+- **Node labels for the specialty constellation** — assessed 2026-08-11, **deferred**, no code
+  written. Validated path is `CSS2DObject`, which is **native to the installed `three@0.169`** (no
+  new dependency; note `@react-three/drei` is NOT installed despite the sandbox README listing it).
+  Full assessment, traps, and the palette prerequisite: **`docs/FRONTIER-CONSTELLATION-LABELS.md`**.
+
 ## Related
 
 - Live claims escalation (Jonathan + Amy): `docs/brand/CLAIMS-REVIEW-JONATHAN-AMY.md` · vault task `tsk_7c208dca0b7644978ef8`
