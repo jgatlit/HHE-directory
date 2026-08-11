@@ -93,7 +93,30 @@ unbacked version of it is the most expensive claim on the page to get wrong.
 Both are built behind a `data-unsubstantiated-claim` flag in the frontier sandbox, so removal is a
 single toggle rather than a copy rewrite.
 
-## ✅ APPROVED COPY RESOLUTIONS — operator decision 2026-08-10
+## 🔴 SUPERSEDED — all four claims RESTORED AS WRITTEN (operator decision, 2026-08-10, later same day)
+
+**The hold below was reversed.** Final decision: **restore all four claims exactly as the client
+wrote them**, and escalate them to a joint **Jonathan + Amy** review rather than resolve them
+unilaterally in code. Rationale: this is the client's own document and the client owns the claim;
+softening their words without their sign-off substitutes an engineering judgement for a business one.
+
+**Live as of `naturalhealthpros.com`:** the pricing band, "Training and credential-verified",
+"Easy scheduling" and "(virtually or in your area)" all render in the client's original wording.
+
+**They are flagged, not fixed.** Each carries an inline `UNSUBSTANTIATED` marker in
+`src/content/copy.ts` recording exactly what the data says, so nobody downstream mistakes their
+presence for evidence. The **Re-enable conditions** below remain the acceptance tests that would
+make each one true.
+
+**Review artifact:** `docs/brand/CLAIMS-REVIEW-JONATHAN-AMY.md`.
+
+One mitigation shipped alongside: `HeroSearch` renders *"Every practitioner listed today works
+virtually, so location is not a limit yet"* whenever the only city is Virtual Practice, and
+switches to generic search guidance once real cities exist. It is data-driven, so it self-corrects.
+
+---
+
+## ~~✅ APPROVED COPY RESOLUTIONS — operator decision 2026-08-10~~ (superseded, retained as record)
 
 **Decision:** hold all four unbacked claims. **Messaging that speaks to future state is approved.**
 The hero credential list ships as written (all 8), because it reads as HHE's program range rather

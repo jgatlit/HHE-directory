@@ -8,12 +8,20 @@
  *
  * Source: docs/brand/2026-08-10-client-landing-copy.md.
  *
- * Four claims in the client's draft had no data behind them and are HELD per the
- * operator's 2026-08-10 ruling ("APPROVED COPY RESOLUTIONS" in that doc): the
- * pricing band is not rendered at all, and three strings ship in substituted
- * wording drawn from the client's own document. The doc carries the original
- * wording and the acceptance test that re-enables each one — do not restore a
- * held claim here without checking its condition has been met.
+ * ⚠️ Four of these claims have NO SUPPORTING DATA in production, measured
+ * 2026-08-10. They were briefly held, then RESTORED AS WRITTEN by operator
+ * decision on the same day: this is the client's document, and the client owns
+ * the claim. They are flagged rather than softened, and are pending a joint
+ * Jonathan + Amy review — see docs/brand/CLAIMS-REVIEW-JONATHAN-AMY.md.
+ *
+ *   priceBand          0 of 13 practitioners priced; 0 Offering rows exist
+ *   trustRow[0]        hheCertified is @default(true); no code path sets it
+ *   trustRow[2]        1 of 13 has a booking link
+ *   scopeOfService.is  no in-area inventory; 13 of 13 are virtual
+ *
+ * Each carries an inline marker below. The acceptance test that would make each
+ * one TRUE is in docs/brand/2026-08-10-client-landing-copy.md → "Re-enable
+ * conditions". Do not treat their presence here as evidence they are accurate.
  */
 
 export const hero = {
@@ -24,28 +32,36 @@ export const hero = {
     "No need to find your alternatives to mainstream medicine through TikTok, ChatGPT, or your grandma's old medicine cabinet.",
   primaryCta: 'Book a session with a trained professional in the health and wellness field.',
   wordmark: 'Natural Health Pros',
+  /** UNSUBSTANTIATED (2026-08-10): 0 of 13 listed practitioners have a price set,
+   *  and 0 Offering rows exist. Client's wording, restored on operator decision. */
+  priceBand: 'Sessions from $29 – $219+',
 } as const;
 
 /*
- * Rows 1 and 3 are substitutions, not the client's draft wording. "Training and
- * credential-verified" asserted a verification step that has never run
- * (hheCertified is @default(true) and no code path sets it), and "Easy
- * scheduling" was true for 1 of 13 listed practitioners. Both replacements come
- * from the client's own footer paragraph and "virtually" framing.
+ * Client's wording, restored as written 2026-08-10.
+ *
+ * Row 0 "Training and credential-verified" — UNSUBSTANTIATED. `hheCertified` is
+ *   `@default(true)` in prisma/schema.prisma and no code path ever sets it, so
+ *   this asserts a verification step that has never run for any practitioner.
+ *   It is also the product's core value proposition, which makes it the most
+ *   expensive of the four to be wrong about.
+ * Row 2 "Easy scheduling" — UNSUBSTANTIATED. 1 of 13 listed practitioners has a
+ *   booking link.
  */
 export const trustRow = [
-  'Formal training in their specialty',
+  'Training and credential-verified',
   'Affordable pricing',
-  'Virtual sessions',
+  'Easy scheduling',
   'Searchable directory',
 ] as const;
 
 export const scopeOfService = {
   isHeading: 'Natural Health Pros is:',
   is: [
-    // "(virtually or in your area)" held — 13 of 13 listed practitioners are
-    // virtual and no in-person inventory exists. Future-state phrasing approved.
-    'A searchable directory that helps you find trained holistic health professionals — virtually today, with in-person practitioners joining as the directory grows.',
+    // UNSUBSTANTIATED: "in your area" has no inventory behind it — 13 of 13
+    // listed practitioners are Virtual Practice, and only 2 City rows have any
+    // practitioner at all. Client's wording, restored on operator decision.
+    'A searchable directory that helps you find trained holistic health professionals (virtually or in your area).',
     'A place to book sessions directly with independent practitioners.',
     "A way to see a variety of practitioners' training, specialty, and pricing before you book.",
   ],

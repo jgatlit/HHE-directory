@@ -137,7 +137,11 @@ export default async function Home({
                 <HeroSearch specialties={specialties} cities={cities} />
               </div>
 
-              <ul className="mt-8 grid max-w-2xl gap-x-6 gap-y-3 sm:grid-cols-2">
+              <p className="mt-7 text-base font-medium text-white sm:text-lg">
+                {hero.priceBand}
+              </p>
+
+              <ul className="mt-6 grid max-w-2xl gap-x-6 gap-y-3 sm:grid-cols-2">
                 {trustRow.map((item) => (
                   <li key={item} className="flex items-center gap-2.5 text-sm text-white/85">
                     <TrustCheck />
