@@ -93,6 +93,36 @@ unbacked version of it is the most expensive claim on the page to get wrong.
 Both are built behind a `data-unsubstantiated-claim` flag in the frontier sandbox, so removal is a
 single toggle rather than a copy rewrite.
 
+## ✅ APPROVED COPY RESOLUTIONS — operator decision 2026-08-10
+
+**Decision:** hold all four unbacked claims. **Messaging that speaks to future state is approved.**
+The hero credential list ships as written (all 8), because it reads as HHE's program range rather
+than as a filter guarantee.
+
+Each replacement is drawn from the **client's own document** wherever one exists, so the page keeps
+the client's voice and intent and drops only the assertions production cannot currently support.
+
+| Held claim | Ships instead | Where the replacement comes from |
+|---|---|---|
+| Hero: "Sessions from **$29 – $219+**" | *removed — no numeric substitute* | The trust row already carries the client's "Affordable pricing", which is positioning rather than a numeric assertion, so it stays and the intent survives. |
+| Trust row: "Training and credential-**verified**" | **"Formal training in their specialty"** | Verbatim from the client's own footer paragraph. Defensible today — the directory is invite-only from HHE programs — whereas "verified" asserts a verification step that has never run. |
+| Trust row: "Easy scheduling" | **"Virtual sessions"** | True for 13/13, and uses the client's own "virtually" framing. |
+| "(virtually **or in your area**)" | **"— virtually today, with in-person practitioners joining as the directory grows"** | Future-state, per the approval above. Preserves the client's evident intent: 14 `City` rows already exist awaiting in-person practitioners. |
+
+**Use-as-written, unchanged:** the disclaimer, both "is / is not" blocks, the footer corporate-identity
+paragraph, the hero credential list, and the positioning line.
+
+### Re-enable conditions
+
+Each held claim ships the moment its data exists — these are the acceptance tests, not opinions:
+
+- **Pricing band** → a representative set of listed practitioners have published, priced offerings
+  (today: 0 of 13; 0 `Offering` rows exist at all).
+- **"credential-verified"** → `hheCertified` is set by a real verification step instead of
+  `@default(true)`. This one needs a product change, not just data.
+- **"Easy scheduling"** → a majority of listed practitioners have a booking link (today: 1 of 13).
+- **"in your area"** → at least one listed practitioner has a non-virtual city (today: 0 of 13).
+
 ## Implementation notes (derived, not client-authored)
 
 These were the pre-verification inferences. Items 2–4 are now **confirmed** by the table above:
@@ -109,3 +139,25 @@ These were the pre-verification inferences. Items 2–4 are now **confirmed** by
    listed practitioners; verify coverage before leading with it.
 5. The positioning line is deliberately irreverent and is the strongest voice signal in the set —
    preserve its tone in any supporting copy written to match.
+
+## Appendix — the hero credential list against the live taxonomy
+
+The hero names eight credential types. Each is a promise that the directory can surface that kind
+of practitioner. This table reconciles the promise against the live specialty taxonomy; it lived as
+a typed `credentialMap` in the frontier sandbox's `copy.ts` but had no consumer, so it was moved
+here rather than shipped as dead code.
+
+`specialty slug: —` means the copy names a credential the taxonomy cannot express. Those are
+deliberately NOT rendered as filter chips — a chip that returns nothing is worse than no chip. They
+remain in the client's prose, which ends in "and more" and therefore promises breadth, not a filter.
+
+| Credential in the hero | Specialty slug | Status | Note |
+|---|---|---|---|
+| Certified Holistic Health Coaches | `holistic-health-coaching` | mapped | |
+| Holistic Health Practitioners | — | unmapped | No specialty record. Reads as the umbrella term, not a filterable credential. |
+| Therapeutic Nutritional Counselors | `therapeutic-nutrition` | partial | Taxonomy splits this: "Therapeutic Nutrition" is ACTIVE, "Therapeutic Nutritional Counseling" exists but is PROPOSED. Needs a merge. |
+| National Board Certified Health & Wellness Coaches | — | unmapped | NBHWC is a credential, not a specialty. Needs a credential field, not a taxonomy row. |
+| Emotion Code Practitioners | — | unmapped | No record. Closest live node is Energy Medicine. |
+| FLY Facilitators | — | unmapped | No record and no obvious parent. |
+| Gut Health Specialists | `gut-health` | mapped | |
+| Live Blood Microscopy Specialists | — | unmapped | No record. Closest live node is Functional Medicine. |
