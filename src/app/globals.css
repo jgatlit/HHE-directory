@@ -36,6 +36,17 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  /* Frontier layer — upstream CMS tokens the repo had never consumed. */
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-field: var(--field);
+  --color-field-deep: var(--field-deep);
+  --color-sage: var(--sage);
+  --color-sage-deep: var(--sage-deep);
+  --color-rose-deep: var(--rose-deep);
+  --color-rose-hover: var(--rose-hover);
+  --color-rose-light: var(--rose-light);
+
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
@@ -94,6 +105,36 @@
     --input: oklch(0.9 0.006 260);
     --ring: oklch(0.403 0.071 253.9); /* navy focus */
     --radius: 0.625rem;
+
+    /* ---- frontier layer: color.* tokens upstream, previously unshipped ---- */
+    --ink: #1a2f4a; /* color.primary.dark  — the deep field */
+    --ink-soft: #35567e; /* color.primary.hover */
+    --field: #2c4a6e; /* color.primary.base */
+    --field-deep: #14243a; /* derived: one stop below primary.dark for 3D depth */
+    --sage: #5b8a6a; /* color.secondary.base */
+    --sage-deep: #3d6549; /* color.secondary.dark */
+    --rose-deep: #9a2d56; /* color.accent.roseDark */
+    --rose-hover: #d44e80; /* color.accent.roseHover */
+    --rose-light: #f2d0de; /* color.accent.roseLight */
+
+    /* ---- frontier layer: gradient.* — verbatim from tokens.json ---- */
+    --gradient-hero-wash: linear-gradient(180deg, #eef1f6 0%, #ffffff 100%);
+    --gradient-nav-bar: linear-gradient(135deg, #1a2f4a 0%, #2c4a6e 100%);
+    --gradient-rose-cta: linear-gradient(135deg, #9a2d56, #c4396e);
+    --gradient-primary-to-secondary: linear-gradient(135deg, #2c4a6e, #5b8a6a);
+    --gradient-sage-wash: linear-gradient(180deg, #eef6f0 0%, #ffffff 100%);
+    --gradient-heading-accent: linear-gradient(135deg, #1a2f4a, #2c4a6e);
+
+    /* ---- frontier layer: shadow.* — verbatim from tokens.json ----
+       Every shadow is tinted with the navy 44,74,110 rather than neutral
+       black, and glowRose carries the CTA rose. That tinting is deliberate
+       in the system: do not substitute Tailwind's neutral shadow scale. */
+    --shadow-subtle: 0 1px 3px rgba(44, 74, 110, 0.08);
+    --shadow-default: 0 4px 12px rgba(44, 74, 110, 0.1);
+    --shadow-elevated: 0 10px 25px rgba(44, 74, 110, 0.12);
+    --shadow-card-hover: 0 8px 32px rgba(44, 74, 110, 0.15);
+    --shadow-glow-primary: 0 4px 20px rgba(44, 74, 110, 0.2);
+    --shadow-glow-rose: 0 4px 20px rgba(196, 57, 110, 0.25);
   }
   .dark {
     --background: oklch(0.145 0 0);
@@ -121,7 +162,115 @@
   * {
     @apply border-border;
   }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
   body {
     @apply bg-background text-foreground;
+  }
+
+  /*
+    D4 — visible focus is a contract, not a default. Rose on navy surfaces,
+    navy on light surfaces; never suppressed.
+  */
+  :focus-visible {
+    outline: 2px solid var(--cta);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  [data-surface='field'] :focus-visible {
+    outline-color: var(--rose-light);
+  }
+}
+
+@layer utilities {
+  .field-surface {
+    background: var(--gradient-nav-bar);
+    color: #ffffff;
+  }
+
+  .hero-wash {
+    background: var(--gradient-hero-wash);
+  }
+
+  .sage-wash {
+    background: var(--gradient-sage-wash);
+  }
+
+  .rose-cta-surface {
+    background: var(--gradient-rose-cta);
+  }
+
+  /* The utility voice: wide-tracked uppercase micro-label. */
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  .glow-rose {
+    box-shadow: var(--shadow-glow-rose);
+  }
+
+  .card-hover-shadow {
+    box-shadow: var(--shadow-card-hover);
+  }
+}
+
+/*
+  D7 — pipeline failure overlay. Deliberately loud: a frontier component that
+  fails must look broken, never blank. Styling lives here so every component
+  renders the identical marker.
+*/
+@layer components {
+  [data-pipeline-failure] {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1.5rem;
+    text-align: center;
+    background: repeating-linear-gradient(
+      135deg,
+      rgba(196, 57, 110, 0.14) 0px,
+      rgba(196, 57, 110, 0.14) 10px,
+      rgba(154, 45, 86, 0.22) 10px,
+      rgba(154, 45, 86, 0.22) 20px
+    );
+    border: 2px dashed var(--cta);
+    border-radius: var(--radius);
+    color: #ffffff;
+    backdrop-filter: blur(2px);
+  }
+
+  /* Full-bleed ambient layers report from a corner panel instead, so the
+     failure text is legible rather than sitting under the page's own copy. */
+  [data-pipeline-failure][data-placement='corner'] {
+    position: absolute;
+    inset: auto 1rem 1rem auto;
+    left: auto;
+    top: auto;
+    align-items: flex-start;
+    max-width: min(26rem, calc(100% - 2rem));
+    padding: 1rem 1.25rem;
+    text-align: left;
+    background: rgba(20, 36, 58, 0.94);
+    border: 2px dashed var(--cta);
+    box-shadow: var(--shadow-glow-rose);
+    backdrop-filter: none;
   }
 }
