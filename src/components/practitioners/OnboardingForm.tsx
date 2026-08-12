@@ -17,7 +17,6 @@ type Props = {
     telehealth: boolean;
     inPerson: boolean;
   };
-  cities: { id: string; name: string; state: string }[];
   specialties: { id: string; name: string }[];
   aliases: { label: string; specialtyId: string }[];
   initialSpecialties: { specialtyId: string; rawLabel: string }[];
@@ -34,7 +33,6 @@ export function OnboardingForm({
   isPrefilled,
   llmConfigured,
   values,
-  cities,
   specialties,
   aliases,
   initialSpecialties,
@@ -93,11 +91,7 @@ export function OnboardingForm({
                   labelling it optional invited practitioners to skip the one field that keeps
                   them out of the directory entirely. */}
               <Field label="City">
-                <CityField
-                  cities={cities}
-                  defaultName={values.cityName}
-                  defaultState={values.cityState}
-                />
+                <CityField defaultName={values.cityName} defaultState={values.cityState} />
               </Field>
               <Field label="Years in practice">
                 <input

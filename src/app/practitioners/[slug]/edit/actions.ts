@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { syncSpecialtySynonyms } from '@/lib/typesense-synonyms';
 import { draftProfile, type DraftSpecialty } from '@/lib/onboarding-draft';
+import { findPlace, VIRTUAL_PLACE } from '@/lib/city-catalog';
 import {
   createAccountLink,
   createConnectedAccount,
@@ -149,38 +150,54 @@ const CITY_COORDS: Record<string, [number, number]> = {
 };
 
 /**
- * Find-or-create a City from free-text input.
+ * Find-or-create a City from free-text input, and hand back coordinates for the haversine index.
  *
  * The form used to post a `cityId` chosen from a fixed 14-row `<select>`, which locked out every
  * practitioner outside those 14 — and a missing city fails isProfileComplete() → isListed(), so
  * the lockout was silent invisibility, not a visible error. See CityField for the full note.
  *
- * Normalization is the whole job here. `cityName`/`cityState` are Typesense facets, so "chicago",
+ * Normalization is the whole job. `cityName`/`cityState` are Typesense facets, so "chicago",
  * "Chicago" and "CHICAGO " must converge on one row or the facet list fragments. Matching is on
  * City's (slug, state) unique key with a slugified name and an upper-cased state, while the
- * stored `name` keeps the practitioner's own casing for display.
+ * stored `name` keeps Census casing (or the practitioner's, for a place the catalog doesn't know).
  *
- * A city created this way has no CITY_COORDS entry, so it gets no lat/long and drops out of the
- * haversine "near me" ranking until someone adds coords. That is the correct trade: appearing in
- * the directory without distance ranking beats not appearing at all.
+ * Coordinates come from the Census catalog rather than CITY_COORDS. That hand-maintained map has
+ * 14 entries, so before this every practitioner-created city had no lat/long and silently dropped
+ * out of the "near me" ranking. CITY_COORDS is still consulted as a fallback so the original
+ * seeded cities keep the exact coordinates they were tuned with.
  */
-async function resolveCityId(rawName: string, rawState: string): Promise<string | null> {
-  const name = rawName.trim().replace(/\s+/g, ' ');
+async function resolveCity(
+  rawName: string,
+  rawState: string,
+): Promise<{ id: string; name: string; state: string; coords: [number, number] | null } | null> {
+  // The typeahead offers "Chicago, IL" as one value, because there are nine Atlantas. Split the
+  // trailing state back off; an explicit state field still wins if the practitioner set one.
+  let name = rawName.trim().replace(/\s+/g, ' ');
+  let stateRaw = rawState.trim().replace(/\s+/g, ' ');
+  const paired = name.match(/^(.*?),\s*([A-Za-z]{2,7})$/);
+  if (paired) {
+    name = paired[1].trim();
+    if (!stateRaw) stateRaw = paired[2];
+  }
   if (!name) return null;
 
   const slug = slugify(name);
-  if (!slug || slug === 'specialty') return null; // slugify's fallback; means nothing usable survived
+  if (!slug || slug === 'specialty') return null; // slugify's fallback: nothing usable survived
 
-  // "Online" is the sentinel for a virtual-only practice and is title-cased, not an abbreviation.
-  const stateRaw = rawState.trim().replace(/\s+/g, ' ');
+  // "Online" is the sentinel for a virtual-only practice — title-cased, not an abbreviation.
   const state = /^online$/i.test(stateRaw) ? 'Online' : stateRaw.toUpperCase() || 'Online';
 
+  const known = findPlace(name, state);
   const city = await prisma.city.upsert({
     where: { slug_state: { slug, state } },
-    create: { slug, name, state },
+    create: { slug, name: known?.name ?? name, state },
     update: {},
   });
-  return city.id;
+
+  const seeded = CITY_COORDS[city.slug];
+  const coords: [number, number] | null =
+    seeded ?? (known && known !== VIRTUAL_PLACE ? [known.lat, known.lon] : null);
+  return { id: city.id, name: city.name, state: city.state, coords };
 }
 
 export async function updatePractitioner(slug: string, formData: FormData): Promise<void> {
@@ -194,10 +211,11 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   const websiteUrl = normalizeWebsiteUrl(String(formData.get('websiteUrl') ?? ''));
   const telehealth = formData.get('telehealth') === 'on' || formData.get('telehealth') === 'true';
   const inPerson = formData.get('inPerson') === 'on' || formData.get('inPerson') === 'true';
-  const cityId = await resolveCityId(
+  const resolvedCity = await resolveCity(
     String(formData.get('cityName') ?? ''),
     String(formData.get('cityState') ?? ''),
   );
+  const cityId = resolvedCity?.id ?? null;
   const photoUrl = String(formData.get('photoUrl') ?? '').trim() || null;
   const yearsRaw = String(formData.get('yearsInPractice') ?? '').trim();
   const yearsInPractice = yearsRaw === '' ? null : Math.max(0, parseInt(yearsRaw, 10) || 0);
@@ -240,12 +258,9 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     bookingLinks.push({ label, url });
   }
 
-  // City coords for haversine
-  const city = cityId
-    ? await prisma.city.findUnique({ where: { id: cityId } })
-    : null;
-
-  const coords = city ? CITY_COORDS[city.slug] ?? null : null;
+  // City coords for haversine — resolved alongside the city itself, so a practitioner-created
+  // city gets Census coordinates instead of silently having none.
+  const coords = resolvedCity?.coords ?? null;
 
   let createdNewTaxonomy = false;
 
@@ -295,8 +310,8 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
           headline,
           bio,
           whoIHelp,
-          city?.name,
-          city?.state,
+          resolvedCity?.name,
+          resolvedCity?.state,
           ...rawLabels,
           ...canonicalNames,
         ]),
@@ -520,10 +535,11 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
   if (!displayName) {
     redirect(`/practitioners/${slug}/edit?error=name-required`);
   }
-  const cityId = await resolveCityId(
+  const resolvedCity = await resolveCity(
     String(formData.get('cityName') ?? ''),
     String(formData.get('cityState') ?? ''),
   );
+  const cityId = resolvedCity?.id ?? null;
   const telehealth = formData.get('telehealth') === 'on' || formData.get('telehealth') === 'true';
   const inPerson = formData.get('inPerson') === 'on' || formData.get('inPerson') === 'true';
   const yearsRaw = String(formData.get('yearsInPractice') ?? '').trim();
@@ -545,8 +561,7 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
     rawSelections = [];
   }
 
-  const city = cityId ? await prisma.city.findUnique({ where: { id: cityId } }) : null;
-  const coords = city ? CITY_COORDS[city.slug] ?? null : null;
+  const coords = resolvedCity?.coords ?? null;
 
   const [existing, catalog] = await Promise.all([
     prisma.practitioner.findUnique({
@@ -619,8 +634,8 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
           draft.headline,
           draft.bio,
           draft.whoIHelp,
-          city?.name,
-          city?.state,
+          resolvedCity?.name,
+          resolvedCity?.state,
           ...draft.modalities,
           ...rawLabels,
           ...canonicalNames,

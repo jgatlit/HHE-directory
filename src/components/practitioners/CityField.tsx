@@ -1,30 +1,59 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+
 type Props = {
-  cities: { name: string; state: string }[];
   defaultName?: string | null;
   defaultState?: string | null;
 };
 
+type Suggestion = { name: string; state: string };
+
 /**
- * Free-text city entry with suggestions, replacing the fixed `<select>`.
+ * City entry: free to type, suggestions from the US Census Gazetteer.
  *
- * The select carried 14 rows nationwide, so a practitioner outside those 14 could not enter their
- * own city at all. Sarah Schindler, onboarding live on 2026-08-11: "is there's not a way to, like,
- * type in a city?" — Jonathan: "I need to clean that up where it's not a finite list of cities."
+ * The control this replaced was a <select> over 14 hand-seeded rows, so any practitioner outside
+ * those 14 could not enter their own city. Sarah Schindler, onboarding live on 2026-08-11: "is
+ * there's not a way to, like, type in a city?"
  *
- * This is NOT plain free text, deliberately. `cityName`/`cityState` are faceted in Typesense, so
- * unconstrained input fragments the facet ("Chicago" / "chicago" / "Chicago, IL" become three
- * filters). The datalist steers toward existing rows, and the server normalizes + find-or-creates
- * against City's (slug, state) unique key — so the taxonomy still converges while nobody is
- * locked out. See resolveCityId() in the edit actions.
+ * That was not a form annoyance. A missing city fails isProfileComplete(), which fails
+ * isListed(), so the practitioner is invisible in the directory with no error shown anywhere —
+ * and it had already caught the one practitioner it could least afford to.
  *
- * Why the required-ish hint: a missing city fails isProfileComplete(), which fails isListed(),
- * which means the practitioner is invisible in the directory. That trap already caught the one
- * practitioner it could least afford to — she finished onboarding, connected a payment account,
- * and never appeared. Say so here rather than letting the completeness banner carry it alone.
+ * Free text alone would trade that for a facet problem: cityName/cityState are faceted in
+ * Typesense, so "Chicago" / "chicago" / "Chgo" would each become their own filter. Suggestions
+ * from a real place catalog keep the field free to type while the taxonomy still converges, and
+ * the same catalog gives the server real coordinates for whatever gets created.
+ *
+ * Suggestions are fetched rather than bundled: the catalog is ~1.2MB and has no business being
+ * shipped to a browser. A <datalist> renders them, so the input degrades to plain free text if
+ * the request fails or JS is off — which is the correct failure mode for a field that gates
+ * whether someone appears at all.
  */
-export function CityField({ cities, defaultName, defaultState }: Props) {
-  const names = Array.from(new Set(cities.map((c) => c.name))).sort();
-  const states = Array.from(new Set(cities.map((c) => c.state))).sort();
+export function CityField({ defaultName, defaultState }: Props) {
+  const [query, setQuery] = useState(defaultName ?? '');
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const ctl = new AbortController();
+    const t = setTimeout(() => {
+      fetch(`/api/cities?q=${encodeURIComponent(q)}`, { signal: ctl.signal })
+        .then((r) => (r.ok ? r.json() : { places: [] }))
+        .then((d: { places?: Suggestion[] }) => setSuggestions(d.places ?? []))
+        .catch(() => {
+          /* typeahead is an assist, not a requirement — free text still submits */
+        });
+    }, 180);
+    return () => {
+      clearTimeout(t);
+      ctl.abort();
+    };
+  }, [query]);
 
   return (
     <div className="grid grid-cols-[1fr_7rem] gap-2">
@@ -32,34 +61,33 @@ export function CityField({ cities, defaultName, defaultState }: Props) {
         <input
           name="cityName"
           list="nhp-city-names"
-          defaultValue={defaultName ?? ''}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
           placeholder="Chicago"
-          autoComplete="address-level2"
+          autoComplete="off"
           className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
         />
         <p className="text-[11px] text-muted-foreground">
-          Type any city. Work remotely? Use <span className="font-medium">Virtual Practice</span> /{' '}
+          Start typing any US city. Work remotely? Use{' '}
+          <span className="font-medium">Virtual Practice</span> /{' '}
           <span className="font-medium">Online</span>. Needed to appear in directory search.
         </p>
       </div>
       <input
         name="cityState"
-        list="nhp-city-states"
         defaultValue={defaultState ?? ''}
         placeholder="IL"
         aria-label="State"
-        autoComplete="address-level1"
+        autoComplete="off"
+        maxLength={10}
         className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
       />
 
+      {/* Suggestion values carry the state so picking one is unambiguous — there are nine
+          Atlantas. The server splits the trailing ", ST" back off on save. */}
       <datalist id="nhp-city-names">
-        {names.map((n) => (
-          <option key={n} value={n} />
-        ))}
-      </datalist>
-      <datalist id="nhp-city-states">
-        {states.map((s) => (
-          <option key={s} value={s} />
+        {suggestions.map((s) => (
+          <option key={`${s.name}|${s.state}`} value={`${s.name}, ${s.state}`} />
         ))}
       </datalist>
     </div>

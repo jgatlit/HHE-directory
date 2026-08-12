@@ -139,8 +139,7 @@ export default async function OnboardingPage({ searchParams }: Props) {
     console.error('Typesense index failed for new practitioner:', err),
   );
 
-  const [cities, specialties, approvedAliases] = await Promise.all([
-    prisma.city.findMany({ orderBy: [{ state: 'asc' }, { name: 'asc' }] }),
+  const [specialties, approvedAliases] = await Promise.all([
     prisma.specialty.findMany({
       where: { status: { in: ['ACTIVE', 'PROPOSED'] } },
       orderBy: { name: 'asc' },
@@ -178,7 +177,6 @@ export default async function OnboardingPage({ searchParams }: Props) {
         telehealth: practitioner.telehealth ?? false,
         inPerson: practitioner.inPerson ?? false,
       }}
-      cities={cities}
       specialties={specialties.map((s) => ({ id: s.id, name: s.name }))}
       aliases={approvedAliases}
       initialSpecialties={initialSpecialties}

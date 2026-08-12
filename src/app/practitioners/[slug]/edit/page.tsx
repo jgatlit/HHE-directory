@@ -91,8 +91,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
     redirect('/auth/error?error=AccessDenied');
   }
 
-  const [cities, specialties, approvedAliases] = await Promise.all([
-    prisma.city.findMany({ orderBy: [{ state: 'asc' }, { name: 'asc' }] }),
+  const [specialties, approvedAliases] = await Promise.all([
     prisma.specialty.findMany({
       where: { status: { in: ['ACTIVE', 'PROPOSED'] } },
       orderBy: { name: 'asc' },
@@ -378,7 +377,6 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="City">
                 <CityField
-                  cities={cities}
                   defaultName={practitioner.city?.name}
                   defaultState={practitioner.city?.state}
                 />
