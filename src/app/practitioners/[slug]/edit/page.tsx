@@ -10,6 +10,7 @@ import { isLlmConfigured } from '@/lib/onboarding-draft';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { CityField } from '@/components/practitioners/CityField';
+import { UnsavedChangesBar } from '@/components/practitioners/UnsavedChangesBar';
 import {
   updatePractitioner,
   generateDraftAction,
@@ -434,6 +435,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
                 Save profile
               </button>
             </div>
+            <UnsavedChangesBar />
           </form>
         </Card>
 
