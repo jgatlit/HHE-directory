@@ -261,6 +261,11 @@ model PractitionerSpecialty {
   practitionerId String
   specialtyId    String
   rawLabel       String? // the practitioner's exact phrasing (their voice), shown on profile
+  /// Practitioner-controlled display order. Before this existed there was no ordering column AND
+  /// no query ordered these at all, so Postgres returned join rows in unspecified order — the
+  /// "random order" Sarah Schindler reported 2026-08-12. Every read orders by it; ties break on
+  /// specialty name so the result is deterministic even when nobody has sorted anything.
+  sortOrder      Int          @default(0)
   practitioner   Practitioner @relation(fields: [practitionerId], references: [id], onDelete: Cascade)
   specialty      Specialty    @relation(fields: [specialtyId], references: [id], onDelete: Cascade)
 
@@ -303,6 +308,10 @@ model WhopProduct {
 
   active    Boolean  @default(true)
   archived  Boolean  @default(false)
+  /// Practitioner-controlled display order. Ties break on price ascending, which is the default
+  /// a practitioner who never sorts anything gets — Sarah Schindler's explicit fallback ask
+  /// ("or at least have it by price from lowest to highest", 2026-08-12).
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

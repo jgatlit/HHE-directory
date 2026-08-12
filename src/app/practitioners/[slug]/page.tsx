@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { CheckCircle2 } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
+import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { PractitionerHero } from '@/components/practitioners/PractitionerHero';
@@ -15,12 +16,12 @@ async function loadPractitioner(slug: string) {
     where: { slug },
     include: {
       city: true,
-      specialties: { include: { specialty: true } },
+      specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
       whopProducts: {
         where: { active: true, archived: false },
-        orderBy: { createdAt: 'asc' },
+        orderBy: OFFERING_ORDER,
       },
     },
   });

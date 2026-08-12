@@ -5,6 +5,7 @@ import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { isWhopPlatformsReady } from '@/lib/whop';
 import { profileCompletenessSignals } from '@/lib/practitioner-indexer';
+import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { isLlmConfigured } from '@/lib/onboarding-draft';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -51,8 +52,10 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const practitioner = await prisma.practitioner.findUnique({
     where: { slug: params.slug },
     include: {
-      specialties: { include: { specialty: true } },
-      whopProducts: { where: { archived: false }, orderBy: { createdAt: 'desc' } },
+      specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
+      // Must match the public profile exactly — these two diverging (desc here, asc there) is
+      // what made a practitioner's arranged order appear reversed on her live page.
+      whopProducts: { where: { archived: false }, orderBy: OFFERING_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
       // The PROFILE OWNER's role — the subject of the billing exemption, and not the same
