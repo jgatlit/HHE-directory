@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { X, Plus, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { SortableList } from '@/components/practitioners/SortableList';
 
 export type CanonicalOption = { id: string; name: string };
 export type AliasOption = { label: string; specialtyId: string };
@@ -78,33 +79,55 @@ export function SpecialtyComboboxField({ options, aliases, initial }: Props) {
     setSelected((prev) => prev.filter((_, i) => i !== idx));
   }
 
+  // dnd-kit needs a stable identity per item, and the array index stops being one the moment the
+  // list can be reordered. A selection is uniquely identified by its canonical id, or by its raw
+  // label when it is a novel term that has no canonical yet.
+  const sortableSelected = useMemo(
+    () => selected.map((s, i) => ({ ...s, id: s.specialtyId ?? `new:${norm(s.rawLabel)}:${i}` })),
+    [selected],
+  );
+  const handleReorder = (next: { specialtyId: string | null; rawLabel: string }[]) =>
+    setSelected(next.map(({ specialtyId, rawLabel }) => ({ specialtyId, rawLabel })));
+
   return (
     <div className="space-y-2">
       {selected.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5">
-          {selected.map((s, i) => (
-            <li key={`${s.specialtyId ?? 'new'}-${s.rawLabel}-${i}`}>
-              <Badge
-                variant={s.specialtyId ? 'secondary' : 'outline'}
-                className="gap-1 py-1 pl-2.5 pr-1"
-              >
-                {!s.specialtyId && <Sparkles className="h-3 w-3 opacity-70" aria-hidden />}
-                <span>{s.rawLabel}</span>
-                {!s.specialtyId && (
-                  <span className="text-[10px] uppercase tracking-wider opacity-60">new</span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => remove(i)}
-                  aria-label={`Remove ${s.rawLabel}`}
-                  className="ml-0.5 rounded-sm p-0.5 hover:bg-muted"
+        <>
+          {/* Order here IS the order on the public profile — the server writes sortOrder from
+              this array's index, so dragging a chip is the whole reorder mechanism. Requested by
+              Sarah Schindler: "It doesn't allow you to arrange them from what you want the
+              potential client to see first." */}
+          <div className="flex flex-wrap gap-1.5">
+            <SortableList items={sortableSelected} onReorder={handleReorder} orientation="wrap">
+              {(s, i, handle) => (
+                <Badge
+                  variant={s.specialtyId ? 'secondary' : 'outline'}
+                  className="gap-1 py-1 pl-1.5 pr-1"
                 >
-                  <X className="h-3 w-3" aria-hidden />
-                </button>
-              </Badge>
-            </li>
-          ))}
-        </ul>
+                  {handle}
+                  {!s.specialtyId && <Sparkles className="h-3 w-3 opacity-70" aria-hidden />}
+                  <span>{s.rawLabel}</span>
+                  {!s.specialtyId && (
+                    <span className="text-[10px] uppercase tracking-wider opacity-60">new</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => remove(i)}
+                    aria-label={`Remove ${s.rawLabel}`}
+                    className="ml-0.5 rounded-sm p-0.5 hover:bg-muted"
+                  >
+                    <X className="h-3 w-3" aria-hidden />
+                  </button>
+                </Badge>
+              )}
+            </SortableList>
+          </div>
+          {selected.length > 1 && (
+            <p className="text-[11px] text-muted-foreground">
+              Drag to reorder — this is the order clients see them in.
+            </p>
+          )}
+        </>
       )}
 
       <div className="relative">

@@ -9,9 +9,15 @@ import { searchPlaces } from '@/lib/city-catalog';
  *
  * Public and unauthenticated on purpose — it returns US Census place names, which are public
  * domain reference data and carry nothing about our practitioners. Results are capped and the
- * response is immutable-cacheable per query, so this is not a useful amplification target.
+ * response is cacheable per query, so this is not a useful amplification target.
+ *
+ * Must stay DYNAMIC. An earlier revision set `force-static` reaching for the caching, and the
+ * build confirmed the cost: the route rendered as ○ (Static), meaning one prerendered response
+ * served for every `?q=` — a typeahead that returns the same suggestions no matter what you type.
+ * The Cache-Control header below is what actually buys the caching, and it varies by URL the way
+ * a query-driven endpoint needs.
  */
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 
 export function GET(request: Request) {
   const q = new URL(request.url).searchParams.get('q') ?? '';

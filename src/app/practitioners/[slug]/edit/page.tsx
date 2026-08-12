@@ -20,6 +20,7 @@ import {
   deleteOffering,
   publishOffering,
   unpublishOffering,
+  reorderOfferings as reorderOffering,
   startWhopOnboarding,
   openPayoutPortal,
 } from './actions';
@@ -117,6 +118,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const deleteOfferingAction = deleteOffering.bind(null, params.slug);
   const publishOfferingAction = publishOffering.bind(null, params.slug);
   const unpublishOfferingAction = unpublishOffering.bind(null, params.slug);
+  const reorderOfferingsAction = reorderOffering.bind(null, params.slug);
   const startWhopOnboardingAction = startWhopOnboarding.bind(null, params.slug);
   const openPayoutPortalAction = openPayoutPortal.bind(null, params.slug);
 
@@ -505,6 +507,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           deleteAction={deleteOfferingAction}
           publishAction={publishOfferingAction}
           unpublishAction={unpublishOfferingAction}
+          reorderAction={reorderOfferingsAction}
         />
 
         <PaymentsSection

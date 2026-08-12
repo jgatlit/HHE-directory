@@ -316,8 +316,12 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
           ...canonicalNames,
         ]),
         specialties: {
-          create: resolved.map((r) => ({
+          // Index IS the order: `resolved` follows specialtiesJson, which follows the order the
+          // practitioner arranged the chips in. Persisting it here is what makes drag-to-sort
+          // work without a separate reorder action.
+          create: resolved.map((r, idx) => ({
             rawLabel: r.rawLabel,
+            sortOrder: idx,
             specialty: { connect: { id: r.specialtyId } },
           })),
         },
@@ -477,8 +481,12 @@ export async function generateDraftAction(slug: string, formData: FormData): Pro
           ...canonicalNames,
         ]),
         specialties: {
-          create: resolved.map((r) => ({
+          // Index IS the order: `resolved` follows specialtiesJson, which follows the order the
+          // practitioner arranged the chips in. Persisting it here is what makes drag-to-sort
+          // work without a separate reorder action.
+          create: resolved.map((r, idx) => ({
             rawLabel: r.rawLabel,
+            sortOrder: idx,
             specialty: { connect: { id: r.specialtyId } },
           })),
         },
@@ -641,8 +649,12 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
           ...canonicalNames,
         ]),
         specialties: {
-          create: resolved.map((r) => ({
+          // Index IS the order: `resolved` follows specialtiesJson, which follows the order the
+          // practitioner arranged the chips in. Persisting it here is what makes drag-to-sort
+          // work without a separate reorder action.
+          create: resolved.map((r, idx) => ({
             rawLabel: r.rawLabel,
+            sortOrder: idx,
             specialty: { connect: { id: r.specialtyId } },
           })),
         },
@@ -742,6 +754,41 @@ export async function deleteOffering(slug: string, formData: FormData): Promise<
   revalidatePath(`/practitioners/${slug}`);
   revalidatePath(`/practitioners/${slug}/edit`);
   redirect(`/practitioners/${slug}/edit#offerings`);
+}
+
+/**
+ * Persist a practitioner's chosen offering order.
+ *
+ * Offerings need an explicit action where specialties and booking links do not: those two ride
+ * along in the profile form, so their submission order IS their sortOrder. Offerings are separate
+ * rows behind their own create/update/delete actions, with no containing form to carry an order.
+ *
+ * `updateMany` per id is scoped by practitionerId as well, so a forged id in the posted list
+ * cannot renumber somebody else's offerings — the ownership check on the action authorises the
+ * practitioner, not each id they send.
+ */
+export async function reorderOfferings(slug: string, formData: FormData): Promise<void> {
+  const target = await authorizeForSlug(slug);
+  let ids: string[] = [];
+  try {
+    const parsed = JSON.parse(String(formData.get('orderJson') ?? '[]'));
+    if (Array.isArray(parsed)) ids = parsed.filter((v): v is string => typeof v === 'string');
+  } catch {
+    return;
+  }
+  if (ids.length === 0) return;
+
+  await prisma.$transaction(
+    ids.map((id, sortOrder) =>
+      prisma.whopProduct.updateMany({
+        where: { id, practitionerId: target.id },
+        data: { sortOrder },
+      }),
+    ),
+  );
+
+  revalidatePath(`/practitioners/${slug}`);
+  revalidatePath(`/practitioners/${slug}/edit`);
 }
 
 // ---- Whop payments (Layer X subscription + Layer Y connected-account offerings) ----
