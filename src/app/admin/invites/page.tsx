@@ -1,11 +1,18 @@
 import { redirect } from 'next/navigation';
-import { Mail, Send, Trash2, Check, Clock, RotateCcw } from 'lucide-react';
+import { Mail, Send, Ban, Check, Clock, RotateCcw } from 'lucide-react';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { createInvitation, revokeInvitation, resendInvitation, resetTrial } from './actions';
+import {
+  createInvitation,
+  revokeInvitation,
+  resendInvitation,
+  resetTrial,
+  deleteInvitation,
+} from './actions';
+import { DeleteInviteButton } from './DeleteInviteButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -172,17 +179,30 @@ export default async function AdminInvitesPage() {
                         </button>
                       </form>
                     )}
+                    {/* Revoke kills the live link but keeps the row; delete clears it from the
+                        list. Both are offered on pending rows because they are different
+                        intents — "this link should stop working" vs "this was a mistake".
+                        Accepted rows get neither: revoke is meaningless once they are in, and
+                        deleting would sever the acceptedByUserId relation resetTrial walks. */}
                     {status === 'pending' && (
                       <form action={revokeInvitation}>
                         <input type="hidden" name="id" value={inv.id} />
                         <button
                           type="submit"
                           aria-label={`Revoke invitation to ${inv.email}`}
+                          title="Revoke — kills the link, keeps the row"
                           className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Ban className="h-3.5 w-3.5" />
                         </button>
                       </form>
+                    )}
+                    {status !== 'accepted' && (
+                      <DeleteInviteButton
+                        id={inv.id}
+                        email={inv.email}
+                        action={deleteInvitation}
+                      />
                     )}
                   </li>
                 );
