@@ -28,7 +28,10 @@ async function generateUniqueSlug(email: string): Promise<string> {
   }
 }
 
-const withSpecialties = { specialties: { include: { specialty: true } } } as const;
+const withSpecialties = {
+  city: true,
+  specialties: { include: { specialty: true } },
+} as const;
 
 // docs/superpowers/specs/2026-07-16-pilot-trial-design.md — "Pilot" is a 90-day trial, not a
 // permanent comp. Keep in sync with scripts/backfill-trial-dates.ts (mirrors this constant).
@@ -169,7 +172,8 @@ export default async function OnboardingPage({ searchParams }: Props) {
       values={{
         displayName: practitioner.displayName,
         describe: practitioner.bio ?? '',
-        cityId: practitioner.cityId ?? '',
+        cityName: practitioner.city?.name ?? '',
+        cityState: practitioner.city?.state ?? '',
         yearsInPractice: practitioner.yearsInPractice,
         telehealth: practitioner.telehealth ?? false,
         inPerson: practitioner.inPerson ?? false,

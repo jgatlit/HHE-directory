@@ -148,6 +148,41 @@ const CITY_COORDS: Record<string, [number, number]> = {
   sedona: [34.8697, -111.761],
 };
 
+/**
+ * Find-or-create a City from free-text input.
+ *
+ * The form used to post a `cityId` chosen from a fixed 14-row `<select>`, which locked out every
+ * practitioner outside those 14 — and a missing city fails isProfileComplete() → isListed(), so
+ * the lockout was silent invisibility, not a visible error. See CityField for the full note.
+ *
+ * Normalization is the whole job here. `cityName`/`cityState` are Typesense facets, so "chicago",
+ * "Chicago" and "CHICAGO " must converge on one row or the facet list fragments. Matching is on
+ * City's (slug, state) unique key with a slugified name and an upper-cased state, while the
+ * stored `name` keeps the practitioner's own casing for display.
+ *
+ * A city created this way has no CITY_COORDS entry, so it gets no lat/long and drops out of the
+ * haversine "near me" ranking until someone adds coords. That is the correct trade: appearing in
+ * the directory without distance ranking beats not appearing at all.
+ */
+async function resolveCityId(rawName: string, rawState: string): Promise<string | null> {
+  const name = rawName.trim().replace(/\s+/g, ' ');
+  if (!name) return null;
+
+  const slug = slugify(name);
+  if (!slug || slug === 'specialty') return null; // slugify's fallback; means nothing usable survived
+
+  // "Online" is the sentinel for a virtual-only practice and is title-cased, not an abbreviation.
+  const stateRaw = rawState.trim().replace(/\s+/g, ' ');
+  const state = /^online$/i.test(stateRaw) ? 'Online' : stateRaw.toUpperCase() || 'Online';
+
+  const city = await prisma.city.upsert({
+    where: { slug_state: { slug, state } },
+    create: { slug, name, state },
+    update: {},
+  });
+  return city.id;
+}
+
 export async function updatePractitioner(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
 
@@ -159,7 +194,10 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   const websiteUrl = normalizeWebsiteUrl(String(formData.get('websiteUrl') ?? ''));
   const telehealth = formData.get('telehealth') === 'on' || formData.get('telehealth') === 'true';
   const inPerson = formData.get('inPerson') === 'on' || formData.get('inPerson') === 'true';
-  const cityId = String(formData.get('cityId') ?? '').trim() || null;
+  const cityId = await resolveCityId(
+    String(formData.get('cityName') ?? ''),
+    String(formData.get('cityState') ?? ''),
+  );
   const photoUrl = String(formData.get('photoUrl') ?? '').trim() || null;
   const yearsRaw = String(formData.get('yearsInPractice') ?? '').trim();
   const yearsInPractice = yearsRaw === '' ? null : Math.max(0, parseInt(yearsRaw, 10) || 0);
@@ -482,7 +520,10 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
   if (!displayName) {
     redirect(`/practitioners/${slug}/edit?error=name-required`);
   }
-  const cityId = String(formData.get('cityId') ?? '').trim() || null;
+  const cityId = await resolveCityId(
+    String(formData.get('cityName') ?? ''),
+    String(formData.get('cityState') ?? ''),
+  );
   const telehealth = formData.get('telehealth') === 'on' || formData.get('telehealth') === 'true';
   const inPerson = formData.get('inPerson') === 'on' || formData.get('inPerson') === 'true';
   const yearsRaw = String(formData.get('yearsInPractice') ?? '').trim();

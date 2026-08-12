@@ -2,6 +2,7 @@ import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { SpecialtyComboboxField } from '@/components/practitioners/SpecialtyComboboxField';
 import { OnboardingSubmitButton } from '@/components/practitioners/OnboardingSubmitButton';
+import { CityField } from '@/components/practitioners/CityField';
 
 type Props = {
   action: (formData: FormData) => void | Promise<void>;
@@ -10,7 +11,8 @@ type Props = {
   values: {
     displayName: string;
     describe: string;
-    cityId: string;
+    cityName: string;
+    cityState: string;
     yearsInPractice: number | null;
     telehealth: boolean;
     inPerson: boolean;
@@ -87,19 +89,15 @@ export function OnboardingForm({
             </Field>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="City (optional)">
-                <select
-                  name="cityId"
-                  defaultValue={values.cityId}
-                  className="h-10 w-full rounded-md border bg-card px-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
-                >
-                  <option value="">— select a city —</option>
-                  {cities.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}, {c.state}
-                    </option>
-                  ))}
-                </select>
+              {/* Not "(optional)": a missing city fails isProfileComplete() → isListed(), so
+                  labelling it optional invited practitioners to skip the one field that keeps
+                  them out of the directory entirely. */}
+              <Field label="City">
+                <CityField
+                  cities={cities}
+                  defaultName={values.cityName}
+                  defaultState={values.cityState}
+                />
               </Field>
               <Field label="Years in practice">
                 <input

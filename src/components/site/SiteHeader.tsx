@@ -25,7 +25,17 @@ const NAV = [
   { label: 'For practitioners', href: '#get-listed' },
 ];
 
-export function SiteHeader() {
+type Props = {
+  /**
+   * The signed-in practitioner's own profile path, or null when signed out (or signed in
+   * without a practitioner record — an admin, say). Resolved on the server and passed down:
+   * this is a client component and the app has no SessionProvider, so reading the session
+   * here would mean mounting one around the whole tree to answer a single question.
+   */
+  profileHref?: string | null;
+};
+
+export function SiteHeader({ profileHref = null }: Props) {
   const reduced = useReducedMotion();
   const [scrolled, setScrolled] = useState(false);
 
@@ -70,17 +80,23 @@ export function SiteHeader() {
         </nav>
 
         {/*
-          Both actions stay in the bar at every width. Sign-in is the only door
-          a listed practitioner has to their own profile, and Get listed is the
+          Both actions stay in the bar at every width. The left slot is the only
+          door a practitioner has to their own profile, and Get listed is the
           entire paid funnel — hiding either behind a mobile menu would put the
           two things this header exists for one tap further away.
+
+          Signed in, that left slot becomes "My profile" and points at their own
+          page rather than a sign-in screen they no longer need. Showing "Sign in"
+          to someone already signed in reads as a broken session and sends them
+          back through a magic-link round trip to reach a page they could have
+          opened directly.
         */}
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <a
-            href={`${SITE_URL}/auth/signin`}
-            className="rounded-lg px-2 py-2 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white sm:px-3"
+            href={profileHref ?? `${SITE_URL}/auth/signin`}
+            className="whitespace-nowrap rounded-lg px-2 py-2 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white sm:px-3"
           >
-            Sign in
+            {profileHref ? 'My profile' : 'Sign in'}
           </a>
           <a
             href="#get-listed"

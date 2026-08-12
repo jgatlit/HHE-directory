@@ -9,6 +9,7 @@ import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { isLlmConfigured } from '@/lib/onboarding-draft';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { CityField } from '@/components/practitioners/CityField';
 import {
   updatePractitioner,
   generateDraftAction,
@@ -52,6 +53,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const practitioner = await prisma.practitioner.findUnique({
     where: { slug: params.slug },
     include: {
+      city: true,
       specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
       // Must match the public profile exactly — these two diverging (desc here, asc there) is
       // what made a practitioner's arranged order appear reversed on her live page.
@@ -374,18 +376,11 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="City">
-                <select
-                  name="cityId"
-                  defaultValue={practitioner.cityId ?? ''}
-                  className="h-10 w-full rounded-md border bg-card px-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
-                >
-                  <option value="">— select a city —</option>
-                  {cities.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}, {c.state}
-                    </option>
-                  ))}
-                </select>
+                <CityField
+                  cities={cities}
+                  defaultName={practitioner.city?.name}
+                  defaultState={practitioner.city?.state}
+                />
               </Field>
 
               <Field label="Years in practice">
