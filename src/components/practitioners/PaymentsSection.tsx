@@ -49,8 +49,13 @@ export function PaymentsSection({
         Coming soon
       </Badge>
     );
+    // Copy corrected 2026-08-12. This previously read "Whop Platforms access is pending on our
+    // side… once granted", which restated the invite-only-API claim CLAUDE.md documents as a
+    // context error — Connected Accounts is self-serve. Saying "pending approval" to a
+    // practitioner describes a future state that does not exist, which is exactly the class of
+    // inaccuracy flagged on the 2026-08-11 call.
     description =
-      "Whop Platforms access is pending on our side — this unlocks direct patient payments once granted. Your directory listing above isn't affected.";
+      "Direct patient payments aren't switched on yet — we're still wiring this up. Your directory listing above isn't affected.";
     cta = (
       <button
         type="button"
@@ -69,14 +74,25 @@ export function PaymentsSection({
     );
     description =
       "Accept payments directly from your patients. Whop verifies your identity and handles payouts — funds go straight to your own account, never through us.";
+    // The ID requirement is surfaced BEFORE the button, not discovered inside the flow. Sarah
+    // Schindler hit the identity check mid-call on 2026-08-11 and had to leave to find her
+    // licence: "letting them know that you're gonna need your ID… have a driver's license or
+    // passport handy. Because people —" It is the single cheapest drop-off fix in onboarding.
     cta = (
-      <form action={startWhopOnboardingAction}>
+      <form action={startWhopOnboardingAction} className="space-y-2">
+        <div className="flex items-start gap-2 rounded-md border border-primary/20 bg-primary/5 p-3 text-xs">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+          <span>
+            <span className="font-medium">Have your ID ready.</span> Whop asks for a driver&apos;s
+            license or passport to verify you. It takes about five minutes.
+          </span>
+        </div>
         <button
           type="submit"
-          aria-label={`Set up payments for ${slug}`}
+          aria-label={`Set up payments and verify ID for ${slug}`}
           className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
         >
-          Set up payments
+          Set up payments &amp; verify ID
         </button>
       </form>
     );

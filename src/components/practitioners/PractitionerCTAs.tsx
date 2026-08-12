@@ -1,5 +1,4 @@
-import { Calendar, Globe, Layers, FileText, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Calendar, Globe, ChevronRight } from 'lucide-react';
 
 type BookingLink = { label?: string | null; url: string };
 type Props = {
@@ -25,9 +24,12 @@ function formatPrice(cents: number): string {
 
 /**
  * Rich-landing-page action block. Booking is live (Wedge 2B — practitioner-owned URLs).
- * Website is the classified col-D external link. Offerings + invoice stay "coming soon"
- * (Wedge 2C — Whop for Platforms, invite-only API pending). Booking = checkout pairing
- * (Amy 5/28) lands when Whop access does. All token-driven.
+ * Website is the classified col-D external link.
+ *
+ * These booking links are the PRIMARY CTAs: booking link = a buyer who has DECIDED to act,
+ * offering cards (rendered below, expand-in-place) = a buyer still deciding. The two surfaces
+ * carry the same offerings on purpose and are treated differently on purpose.
+ * See docs/2026-08-12-booking-checkout-flow.md.
  */
 export function PractitionerCTAs({ bookingLinks = [], websiteUrl, firstSessionPriceCents }: Props) {
   const primaryBooking = bookingLinks[0];
@@ -105,25 +107,13 @@ export function PractitionerCTAs({ bookingLinks = [], websiteUrl, firstSessionPr
         </a>
       )}
 
-      {[
-        { icon: Layers, label: 'Browse offerings', helper: 'Programs, memberships, packages' },
-        { icon: FileText, label: 'Request invoice', helper: 'For employer or HSA reimbursement' },
-      ].map(({ icon: Icon, label, helper }) => (
-        <div
-          key={label}
-          className="flex items-center gap-3 rounded-lg border bg-card p-3 opacity-60"
-          aria-disabled
-        >
-          <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{label}</p>
-            <p className="truncate text-xs text-muted-foreground">{helper}</p>
-          </div>
-          <Badge variant="outline" className="shrink-0 text-[10px] uppercase tracking-wider">
-            Coming soon
-          </Badge>
-        </div>
-      ))}
+      {/* "Browse offerings" + "Request invoice" tiles removed 2026-08-12. They rendered
+          disabled with a Coming-soon badge directly above the real offerings section, and a
+          practitioner reviewing her own public page read them in client voice: "as a client
+          looking for a practitioner, this is confusing… there's already offerings here."
+          "Browse offerings" duplicated a live section; HSA reimbursement is available only to
+          NBHWC-credentialed practitioners, so it can never be a blanket row — it needs a
+          credential field before it comes back. See docs/2026-08-11-sarah-onboarding-review.md §A4/§A5. */}
     </section>
   );
 }
