@@ -99,9 +99,15 @@ export function SubscriptionSection({
         {visible ? 'Listed' : 'Not listed'}
       </Badge>
     );
+    // State the terms AND that they have not started. This is the single question every
+    // practitioner asks first, and Sarah Schindler — who now fields those questions — flagged
+    // that having to explain it verbally every time was a problem: "I think I need to change the
+    // wording that that is not starting yet… so that you don't have to keep explaining that."
+    // Jonathan, same call: "It's easy to let a dozen of those little inaccuracies describing a
+    // future state remain in a tool. It's always a temptation to do that."
     description = visible
-      ? 'Your profile is listed in the Natural Health Pros directory.'
-      : 'Your listing is free — complete your profile above to appear in the directory.';
+      ? `Your profile is listed in the Natural Health Pros directory. Billing hasn't started — the ${priceLabel} 90-day pilot begins later, and you'll be told before it does.`
+      : `Complete your profile above to appear in the directory. Billing hasn't started — the ${priceLabel} 90-day pilot begins later, and you'll be told before it does.`;
   } else if (trialEndsAt.getTime() > now) {
     const daysRemaining = Math.max(1, Math.ceil((trialEndsAt.getTime() - now) / 86_400_000));
     // timeZone pinned to UTC to match the warning email's date (see trial-sweep's warningCopy).

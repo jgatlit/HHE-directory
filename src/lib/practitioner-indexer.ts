@@ -8,6 +8,7 @@ import type {
   Prisma,
 } from '@prisma/client';
 import { prisma } from './prisma';
+import { SPECIALTY_ORDER } from './practitioner-ordering';
 import { getTypesenseAdmin, TYPESENSE_COLLECTION } from './typesense-server';
 
 type SpecialtyWithParent = Specialty & { parent: Specialty | null };
@@ -170,7 +171,12 @@ export function toTypesenseDoc(p: PractitionerForIndex): PractitionerDoc {
 
 const PRACTITIONER_INCLUDE = {
   city: true,
-  specialties: { include: { specialty: { include: { parent: true } } } },
+  // Ordered so the indexed document matches what the profile renders; without this the
+  // Typesense doc's specialty order was whatever Postgres happened to return.
+  specialties: {
+    include: { specialty: { include: { parent: true } } },
+    orderBy: SPECIALTY_ORDER,
+  },
   user: { select: { role: true } },
 } as const;
 

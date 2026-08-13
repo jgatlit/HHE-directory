@@ -12,6 +12,8 @@ import { SiteHeader } from '@/components/site/SiteHeader';
 import { SiteFooter } from '@/components/site/SiteFooter';
 import { HeroSearch } from '@/components/site/HeroSearch';
 import { StructuredData } from '@/components/site/StructuredData';
+import { auth } from '@/auth';
+import { prisma } from '@/lib/prisma';
 import { getDirectory } from '@/lib/directory';
 import { getListed, hero, trustRow } from '@/content/copy';
 import { searchUrl, SITE_URL } from '@/lib/search-url';
@@ -76,6 +78,20 @@ export default async function Home({
   const forcedFailure = parseFailure(searchParams?.pipelineFailure);
   const { practitioners, specialties, cities, facts } = await getDirectory();
 
+  // Header identity. A signed-in practitioner should be offered their own page, not a sign-in
+  // screen they have already passed. Resolved here rather than in SiteHeader because that is a
+  // client component and there is no SessionProvider — mounting one around the whole tree to
+  // answer this would be a lot of machinery for one link. Null for signed-out visitors and for
+  // signed-in users with no practitioner record (e.g. an admin), who correctly keep "Sign in".
+  const session = await auth();
+  const ownProfile = session?.user?.id
+    ? await prisma.practitioner.findUnique({
+        where: { userId: session.user.id },
+        select: { slug: true },
+      })
+    : null;
+  const profileHref = ownProfile ? `/practitioners/${ownProfile.slug}` : null;
+
   // Field density is the real directory: one node per listed practitioner,
   // grouped by how many specialties they hold.
   const fieldGroups = practitioners.map((p) => p.specialties.length);
@@ -90,7 +106,7 @@ export default async function Home({
   return (
     <>
       <StructuredData practitioners={practitioners} description={DESCRIPTION} />
-      <SiteHeader />
+      <SiteHeader profileHref={profileHref} />
 
       <main id="main">
         {/* ── HERO ─────────────────────────────────────────────────────────

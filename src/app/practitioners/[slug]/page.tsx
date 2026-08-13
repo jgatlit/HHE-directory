@@ -1,8 +1,10 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Pencil } from 'lucide-react';
+import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
+import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { PractitionerHero } from '@/components/practitioners/PractitionerHero';
@@ -15,12 +17,12 @@ async function loadPractitioner(slug: string) {
     where: { slug },
     include: {
       city: true,
-      specialties: { include: { specialty: true } },
+      specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
       whopProducts: {
         where: { active: true, archived: false },
-        orderBy: { createdAt: 'asc' },
+        orderBy: OFFERING_ORDER,
       },
     },
   });
@@ -45,8 +47,18 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
   const p = await loadPractitioner(params.slug);
   if (!p) notFound();
 
+  // The owner needs a way back to their dashboard from their own public page. Before this, the
+  // dashboard link rendered ONLY behind ?onboarded — so once that first redirect was gone, the
+  // practitioner had to hand-type "/edit" onto the URL. Sarah Schindler had to be walked through
+  // exactly that on the 2026-08-11 call ("that's how you can get to it right now… that's another
+  // item for my list"). Viewer-only: this never renders for the public.
+  const session = await auth();
+  const canEdit =
+    !!session?.user &&
+    (session.user.id === p.userId || session.user.role === 'ADMIN');
+
   // Dual-label: canonical names = curated rail chips; rawLabels = the practitioner's own
-  // phrasing, listed under "How I work". Parent rollups excluded from the chip set to keep it tight.
+  // phrasing, listed under "Specialties". Parent rollups excluded from the chip set to keep it tight.
   const canonicalChips = Array.from(new Set(p.specialties.map((ps) => ps.specialty.name)));
   const rawModalities = Array.from(
     new Set(p.specialties.map((ps) => ps.rawLabel?.trim()).filter((l): l is string => !!l)),
@@ -71,6 +83,17 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
               Go to dashboard
             </Link>
           </Card>
+        )}
+        {canEdit && !searchParams.onboarded && (
+          <div className="flex justify-end">
+            <Link
+              href={`/practitioners/${params.slug}/edit`}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border bg-card px-4 text-xs font-medium transition-colors hover:bg-accent/40"
+            >
+              <Pencil className="h-3.5 w-3.5" aria-hidden />
+              Edit my profile
+            </Link>
+          </div>
         )}
         <Card className="p-6 sm:p-12">
           <div className="grid gap-12 sm:grid-cols-[22rem_1fr]">
@@ -125,13 +148,17 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 </section>
               )}
 
+              {/* Heading is "Specialties", not "How I work": this section renders the
+                  practitioner's own specialty phrasing, and the old title misdescribed it.
+                  Sarah Schindler, reviewing her own page 2026-08-11: "the How I Work title
+                  doesn't fit in with the… I get the specialties, but the How I Work doesn't." */}
               {rawModalities.length > 0 && (
                 <section
-                  aria-label="How I work"
+                  aria-label="Specialties"
                   className="space-y-2 rounded-xl bg-secondary/40 p-6"
                 >
                   <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    How I work
+                    Specialties
                   </h2>
                   <ul className="divide-y rounded-lg border bg-card">
                     {rawModalities.map((m) => (

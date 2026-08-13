@@ -123,6 +123,35 @@ export async function revokeInvitation(formData: FormData): Promise<void> {
   revalidatePath('/admin/invites');
 }
 
+/**
+ * Hard-delete an invitation row.
+ *
+ * Distinct from revokeInvitation, which backdates `expiresAt` and leaves the row in the list
+ * forever — useful for killing a live link, useless for clearing the list. Operator asked for a
+ * real delete (2026-08-12).
+ *
+ * ACCEPTED INVITATIONS ARE NEVER DELETED, and the guard is not cosmetic: `acceptedByUserId` is
+ * the relation /admin/invites walks to reach the practitioner behind an invite, which is how
+ * resetTrial finds them. Deleting an accepted row would sever that and take the record of how
+ * that practitioner was admitted with it. Revoke is meaningless there too (they are already in),
+ * so accepted rows simply have no destructive action — by design.
+ */
+export async function deleteInvitation(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const id = String(formData.get('id') ?? '');
+  if (!id) return;
+
+  const invitation = await prisma.invitation.findUnique({
+    where: { id },
+    select: { acceptedAt: true },
+  });
+  if (!invitation) redirect('/admin/invites?error=not-found');
+  if (invitation.acceptedAt) redirect('/admin/invites?error=already-accepted');
+
+  await prisma.invitation.delete({ where: { id } });
+  revalidatePath('/admin/invites');
+}
+
 export async function resendInvitation(formData: FormData): Promise<void> {
   // Guard still runs — only the (now-unused) session binding is dropped: the branded sender
   // composes the email, so this action no longer needs invitedByName.

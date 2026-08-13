@@ -17,6 +17,7 @@
  */
 import { prisma } from './prisma';
 import { listedWhere } from './practitioner-indexer';
+import { SPECIALTY_ORDER } from './practitioner-ordering';
 
 export type DirectorySpecialty = {
   slug: string;
@@ -62,7 +63,12 @@ export async function getDirectory(): Promise<Directory> {
     orderBy: { acceptedAt: 'desc' },
     include: {
       city: true,
-      specialties: { include: { specialty: { include: { parent: true } } } },
+      // Same order the profile renders — a practitioner's chips shouldn't reshuffle between
+      // the directory card and the page it links to.
+      specialties: {
+        include: { specialty: { include: { parent: true } } },
+        orderBy: SPECIALTY_ORDER,
+      },
     },
   });
 

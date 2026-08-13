@@ -5,9 +5,12 @@ import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { isWhopPlatformsReady } from '@/lib/whop';
 import { profileCompletenessSignals } from '@/lib/practitioner-indexer';
+import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { isLlmConfigured } from '@/lib/onboarding-draft';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { CityField } from '@/components/practitioners/CityField';
+import { UnsavedChangesBar } from '@/components/practitioners/UnsavedChangesBar';
 import {
   updatePractitioner,
   generateDraftAction,
@@ -17,6 +20,7 @@ import {
   deleteOffering,
   publishOffering,
   unpublishOffering,
+  reorderOfferings as reorderOffering,
   startWhopOnboarding,
   openPayoutPortal,
 } from './actions';
@@ -51,8 +55,11 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const practitioner = await prisma.practitioner.findUnique({
     where: { slug: params.slug },
     include: {
-      specialties: { include: { specialty: true } },
-      whopProducts: { where: { archived: false }, orderBy: { createdAt: 'desc' } },
+      city: true,
+      specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
+      // Must match the public profile exactly — these two diverging (desc here, asc there) is
+      // what made a practitioner's arranged order appear reversed on her live page.
+      whopProducts: { where: { archived: false }, orderBy: OFFERING_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
       // The PROFILE OWNER's role — the subject of the billing exemption, and not the same
@@ -85,8 +92,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
     redirect('/auth/error?error=AccessDenied');
   }
 
-  const [cities, specialties, approvedAliases] = await Promise.all([
-    prisma.city.findMany({ orderBy: [{ state: 'asc' }, { name: 'asc' }] }),
+  const [specialties, approvedAliases] = await Promise.all([
     prisma.specialty.findMany({
       where: { status: { in: ['ACTIVE', 'PROPOSED'] } },
       orderBy: { name: 'asc' },
@@ -112,6 +118,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const deleteOfferingAction = deleteOffering.bind(null, params.slug);
   const publishOfferingAction = publishOffering.bind(null, params.slug);
   const unpublishOfferingAction = unpublishOffering.bind(null, params.slug);
+  const reorderOfferingsAction = reorderOffering.bind(null, params.slug);
   const startWhopOnboardingAction = startWhopOnboarding.bind(null, params.slug);
   const openPayoutPortalAction = openPayoutPortal.bind(null, params.slug);
 
@@ -371,18 +378,10 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="City">
-                <select
-                  name="cityId"
-                  defaultValue={practitioner.cityId ?? ''}
-                  className="h-10 w-full rounded-md border bg-card px-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
-                >
-                  <option value="">— select a city —</option>
-                  {cities.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}, {c.state}
-                    </option>
-                  ))}
-                </select>
+                <CityField
+                  defaultName={practitioner.city?.name}
+                  defaultState={practitioner.city?.state}
+                />
               </Field>
 
               <Field label="Years in practice">
@@ -436,6 +435,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
                 Save profile
               </button>
             </div>
+            <UnsavedChangesBar />
           </form>
         </Card>
 
@@ -507,6 +507,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           deleteAction={deleteOfferingAction}
           publishAction={publishOfferingAction}
           unpublishAction={unpublishOfferingAction}
+          reorderAction={reorderOfferingsAction}
         />
 
         <PaymentsSection

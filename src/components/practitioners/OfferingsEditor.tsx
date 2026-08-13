@@ -1,6 +1,7 @@
 import { CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
+import { OfferingOrderControls } from '@/components/practitioners/OfferingOrderControls';
 import { Separator } from '@/components/ui/separator';
 
 type Offering = {
@@ -45,6 +46,7 @@ export function OfferingsEditor({
   deleteAction,
   publishAction,
   unpublishAction,
+  reorderAction,
 }: {
   offerings: Offering[];
   payoutsEnabled: boolean;
@@ -53,6 +55,7 @@ export function OfferingsEditor({
   deleteAction: Action;
   publishAction: Action;
   unpublishAction: Action;
+  reorderAction: Action;
 }) {
   return (
     <Card id="offerings" className="scroll-mt-8 space-y-5 p-6 sm:p-8">
@@ -64,6 +67,10 @@ export function OfferingsEditor({
           or leave it unpublished and clients still reach you via your booking link.
         </p>
       </div>
+
+      {offerings.length > 1 && (
+        <OfferingOrderControls ids={offerings.map((o) => o.id)} action={reorderAction} />
+      )}
 
       {offerings.length > 0 && (
         <ul className="space-y-3">

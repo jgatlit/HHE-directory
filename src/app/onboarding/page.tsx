@@ -28,11 +28,33 @@ async function generateUniqueSlug(email: string): Promise<string> {
   }
 }
 
-const withSpecialties = { specialties: { include: { specialty: true } } } as const;
+const withSpecialties = {
+  city: true,
+  specialties: { include: { specialty: true } },
+} as const;
 
 // docs/superpowers/specs/2026-07-16-pilot-trial-design.md — "Pilot" is a 90-day trial, not a
 // permanent comp. Keep in sync with scripts/backfill-trial-dates.ts (mirrors this constant).
+// Not exported: a Next page module may only export its own reserved names (`default`,
+// `metadata`, `revalidate`, …), and any other export fails the build's route type-check.
+// scripts/backfill-trial-dates.ts mirrors this value as a literal for the same reason.
 const TRIAL_DAYS = 90;
+
+/**
+ * The 90-day clock does NOT run during the pilot. Operator ruling 2026-08-12: everyone stays in
+ * pilot indefinitely until we deliberately flip on live production.
+ *
+ * This is a config flip, not a code change, precisely so going live doesn't need a PR. Until it
+ * is set, onboarding leaves `trialEndsAt` null — which `isListed()` already treats as
+ * listed/pre-trial, so this needs no new listing logic. `scripts/backfill-trial-dates.ts` is the
+ * lever that starts everyone's clock together on go-live day.
+ *
+ * Why it matters that this was wrong: Jonathan told Sarah Schindler on the 2026-08-11 call that
+ * "everybody's gonna be in pilot indefinitely, until we're actually, like, okay, the 90 days
+ * starts now" — while this file was stamping her a November 9th expiry as she spoke. A tool that
+ * describes a future state it doesn't implement is the exact failure he named in the same call.
+ */
+const trialClockEnabled = process.env.PILOT_TRIAL_CLOCK_ENABLED === 'true';
 
 export default async function OnboardingPage({ searchParams }: Props) {
   const session = await auth();
@@ -80,13 +102,18 @@ export default async function OnboardingPage({ searchParams }: Props) {
 
     // An HHE invitation grants a 90-day pilot — not a permanent comp. Reaching this line proves
     // the grant is earned: the invitation-required, validity and email-match gates above all
-    // passed, so this user was vouched for by an admin. The clock starts HERE, at genuine
-    // onboarding, and only here — never inferred from a seed/import date (see the design doc:
-    // the 12 pilots' acceptedAt is the 2026-05-29 import date, not a real onboarding; anchoring
-    // the clock there would put them 48 days into a 90-day trial for a product they've never
-    // opened). `comped` is deprecated in favor of this clock — deliberately omitted here.
-    const trialEndsAt = new Date();
-    trialEndsAt.setUTCDate(trialEndsAt.getUTCDate() + TRIAL_DAYS);
+    // passed, so this user was vouched for by an admin. When the clock IS running it starts
+    // HERE, at genuine onboarding, and only here — never inferred from a seed/import date (see
+    // the design doc: the 12 pilots' acceptedAt is the 2026-05-29 import date, not a real
+    // onboarding; anchoring the clock there would put them 48 days into a 90-day trial for a
+    // product they've never opened). `comped` is deprecated in favor of this clock — omitted.
+    //
+    // During the pilot the clock does not run at all: null means pre-trial, still listed.
+    let trialEndsAt: Date | null = null;
+    if (trialClockEnabled) {
+      trialEndsAt = new Date();
+      trialEndsAt.setUTCDate(trialEndsAt.getUTCDate() + TRIAL_DAYS);
+    }
     practitioner = await prisma.practitioner.create({
       data: { userId: session.user.id, slug, displayName, acceptedAt: new Date(), trialEndsAt },
       include: withSpecialties,
@@ -112,8 +139,7 @@ export default async function OnboardingPage({ searchParams }: Props) {
     console.error('Typesense index failed for new practitioner:', err),
   );
 
-  const [cities, specialties, approvedAliases] = await Promise.all([
-    prisma.city.findMany({ orderBy: [{ state: 'asc' }, { name: 'asc' }] }),
+  const [specialties, approvedAliases] = await Promise.all([
     prisma.specialty.findMany({
       where: { status: { in: ['ACTIVE', 'PROPOSED'] } },
       orderBy: { name: 'asc' },
@@ -145,12 +171,12 @@ export default async function OnboardingPage({ searchParams }: Props) {
       values={{
         displayName: practitioner.displayName,
         describe: practitioner.bio ?? '',
-        cityId: practitioner.cityId ?? '',
+        cityName: practitioner.city?.name ?? '',
+        cityState: practitioner.city?.state ?? '',
         yearsInPractice: practitioner.yearsInPractice,
         telehealth: practitioner.telehealth ?? false,
         inPerson: practitioner.inPerson ?? false,
       }}
-      cities={cities}
       specialties={specialties.map((s) => ({ id: s.id, name: s.name }))}
       aliases={approvedAliases}
       initialSpecialties={initialSpecialties}
