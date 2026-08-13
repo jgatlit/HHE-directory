@@ -210,6 +210,42 @@ async function resolveCity(
 export async function updatePractitioner(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
 
+  // ---- Optimistic-concurrency guard. Runs FIRST, before anything writes. ----
+  //
+  // This form is a last-write-wins document: it rewrites child collections wholesale, so a client
+  // holding a stale view destroys rows it never knew existed. The realistic second editor is not a
+  // second tab — `authorizeForSlug` lets any ADMIN save any practitioner's profile, so an operator
+  // fixing someone's profile in support while they have it open is the case that matters.
+  //
+  // It sits at the very top because `resolveCity()` further down performs a `city.upsert`: a save
+  // that is about to be refused as stale must not have already written a City row.
+  //
+  // ⚠️ ABSENT TOKEN IS A CONFLICT, not a skip. A form with no token is one rendered by a previous
+  // deploy — precisely the staleness this exists to catch — so treating it as "nothing to compare"
+  // would disable the guard exactly in the window it matters most.
+  const postedVersion = String(formData.get('profileUpdatedAt') ?? '');
+  const currentVersion = (
+    await prisma.practitioner.findUnique({
+      where: { id: target.id },
+      select: { updatedAt: true },
+    })
+  )?.updatedAt.toISOString();
+
+  if (!postedVersion || (currentVersion && currentVersion !== postedVersion)) {
+    // ⚠️ The posted token is echoed back, and that is load-bearing. This redirect is a SOFT
+    // navigation, so the form subtree stays MOUNTED (the same trap documented on the `?saved=1`
+    // path) — the practitioner's typed text and the client islands' state all survive. But the
+    // hidden token is a controlled `value`, which React WOULD refresh from the server. It would
+    // then match, so a second click on Save — the natural response to an error — would sail
+    // through the guard and write the stale collections it just blocked. Fires once, then disarms.
+    //
+    // Echoing keeps the form armed: every retry is refused until a real reload re-seeds it. That
+    // also preserves their work, which matters because a false positive is reachable (see below).
+    redirect(
+      `/practitioners/${slug}/edit?error=profile-changed-elsewhere&v=${encodeURIComponent(postedVersion)}`,
+    );
+  }
+
   const displayName = String(formData.get('displayName') ?? '').trim();
   const bio = String(formData.get('bio') ?? '').trim();
   const headline = String(formData.get('headline') ?? '').trim() || null;
@@ -263,6 +299,7 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   if (bookingUrlsRaw.length > MAX_BOOKING_LINKS) {
     redirect(`/practitioners/${slug}/edit?error=too-many-booking-links`);
   }
+
   const bookingLinks = parseBookingLinkRows(
     { ids: bookingIds, labels: bookingLabels, urls: bookingUrlsRaw },
     normalizeBookingUrl,

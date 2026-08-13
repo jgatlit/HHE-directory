@@ -111,7 +111,7 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 hheCertified={p.hheCertified}
               />
               <PractitionerCTAs
-                bookingLinks={p.bookingLinks.map((b) => ({ label: b.label, url: b.url }))}
+                bookingLinks={p.bookingLinks.map((b) => ({ id: b.id, label: b.label, url: b.url }))}
                 websiteUrl={p.websiteUrl}
                 firstSessionPriceCents={p.firstSessionPriceCents}
               />
