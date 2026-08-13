@@ -3,6 +3,7 @@ import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { isLlmConfigured } from '@/lib/onboarding-draft';
+import { SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { submitOnboarding } from '@/app/practitioners/[slug]/edit/actions';
 import { OnboardingForm } from '@/components/practitioners/OnboardingForm';
 
@@ -28,9 +29,14 @@ async function generateUniqueSlug(email: string): Promise<string> {
   }
 }
 
+// Ordered like every other read site. This one was missed when ordering shipped, and it is not
+// cosmetic here: submitOnboarding rewrites sortOrder from the order this query returns, so an
+// unordered read would let a revisit to /onboarding silently destroy an arrangement the
+// practitioner had made on their dashboard — reintroducing exactly the non-determinism the
+// ordering work removed.
 const withSpecialties = {
   city: true,
-  specialties: { include: { specialty: true } },
+  specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
 } as const;
 
 // docs/superpowers/specs/2026-07-16-pilot-trial-design.md — "Pilot" is a 90-day trial, not a

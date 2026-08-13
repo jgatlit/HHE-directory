@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import {
   DndContext,
   KeyboardSensor,
@@ -58,6 +58,14 @@ export function SortableList<T extends { id: string }>({
   orientation?: Orientation;
   children: (item: T, index: number, handle: ReactNode) => ReactNode;
 }) {
+  // Reordering is React state, not a DOM edit, so it emits no input/change event and the profile
+  // form's unsaved-changes guard could not see it — the ordering feature would have been the one
+  // change silently lost. Announce it as a real bubbling event instead of wiring a bespoke
+  // callback through three different consumers.
+  const root = useRef<HTMLDivElement>(null);
+  const announce = () =>
+    root.current?.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+
   const sensors = useSensors(
     // A small activation distance so a click on a button inside a row stays a click, rather than
     // a one-pixel drag that swallows it — every row here has a remove button.
@@ -71,9 +79,11 @@ export function SortableList<T extends { id: string }>({
     const to = items.findIndex((i) => i.id === over.id);
     if (from < 0 || to < 0) return;
     onReorder(arrayMove(items, from, to));
+    announce();
   }
 
   return (
+    <div ref={root}>
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
@@ -93,6 +103,7 @@ export function SortableList<T extends { id: string }>({
         ))}
       </SortableContext>
     </DndContext>
+    </div>
   );
 }
 

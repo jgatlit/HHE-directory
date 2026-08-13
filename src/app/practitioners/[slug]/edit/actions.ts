@@ -8,7 +8,7 @@ import { prisma } from '@/lib/prisma';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { syncSpecialtySynonyms } from '@/lib/typesense-synonyms';
 import { draftProfile, type DraftSpecialty } from '@/lib/onboarding-draft';
-import { findPlace, VIRTUAL_PLACE } from '@/lib/city-catalog';
+import { findPlace, findPlacesByName, splitCityEntry, VIRTUAL_PLACE, type Place } from '@/lib/city-catalog';
 import {
   createAccountLink,
   createConnectedAccount,
@@ -168,26 +168,31 @@ const CITY_COORDS: Record<string, [number, number]> = {
  */
 async function resolveCity(
   rawName: string,
-  rawState: string,
-): Promise<{ id: string; name: string; state: string; coords: [number, number] | null } | null> {
-  // The typeahead offers "Chicago, IL" as one value, because there are nine Atlantas. Split the
-  // trailing state back off; an explicit state field still wins if the practitioner set one.
-  let name = rawName.trim().replace(/\s+/g, ' ');
-  let stateRaw = rawState.trim().replace(/\s+/g, ' ');
-  const paired = name.match(/^(.*?),\s*([A-Za-z]{2,7})$/);
-  if (paired) {
-    name = paired[1].trim();
-    if (!stateRaw) stateRaw = paired[2];
-  }
+): Promise<{ id: string; name: string; state: string; coords: [number, number] | null } | 'invalid' | null> {
+  const raw = rawName.trim().replace(/\s+/g, ' ');
+  if (!raw) return null;
+
+  // ONE field, "Chicago, IL". splitCityEntry only treats a trailing token as a state when it is a
+  // REAL state code, so "Santa Fe" keeps both words. A separate state box used to supply this and
+  // produced three defects: a blank box defaulted to the virtual sentinel, the sentinel then
+  // captured the NAME as well, and a stale prefilled box beat the state in the suggestion just
+  // picked. One value cannot disagree with itself.
+  const { name, state: parsedState } = splitCityEntry(raw);
   if (!name) return null;
 
   const slug = slugify(name);
-  if (!slug || slug === 'specialty') return null; // slugify's fallback: nothing usable survived
+  if (!slug || slug === 'specialty') return 'invalid'; // slugify's fallback: nothing usable survived
 
-  // "Online" is the sentinel for a virtual-only practice — title-cased, not an abbreviation.
-  const state = /^online$/i.test(stateRaw) ? 'Online' : stateRaw.toUpperCase() || 'Online';
+  // Resolve against the catalog. Without a state we can still resolve when the name is
+  // unambiguous; with several matches we need the practitioner to disambiguate rather than guess —
+  // guessing is how someone ends up listed in the wrong state.
+  const candidates = parsedState ? [findPlace(name, parsedState)].filter(Boolean) : findPlacesByName(name);
+  const known = (candidates.length === 1 ? candidates[0] : null) as Place | null;
 
-  const known = findPlace(name, state);
+  // Never invent a state. "Online" is the virtual sentinel and must be chosen, not fallen into.
+  const state = known?.state ?? parsedState;
+  if (!state) return 'invalid';
+
   const city = await prisma.city.upsert({
     where: { slug_state: { slug, state } },
     create: { slug, name: known?.name ?? name, state },
@@ -211,10 +216,15 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   const websiteUrl = normalizeWebsiteUrl(String(formData.get('websiteUrl') ?? ''));
   const telehealth = formData.get('telehealth') === 'on' || formData.get('telehealth') === 'true';
   const inPerson = formData.get('inPerson') === 'on' || formData.get('inPerson') === 'true';
-  const resolvedCity = await resolveCity(
-    String(formData.get('cityName') ?? ''),
-    String(formData.get('cityState') ?? ''),
-  );
+  // An unresolvable city is an ERROR, not a silent null. Falling through to null clears cityId,
+  // which fails isProfileComplete() -> isListed() and DELETES the practitioner from the search
+  // index — while the save reports success. That is the exact silent-invisibility failure this
+  // whole workstream exists to remove, so it has to surface the way the displayName check does.
+  const resolved = await resolveCity(String(formData.get('cityName') ?? ''));
+  if (resolved === 'invalid') {
+    redirect(`/practitioners/${slug}/edit?error=invalid-city`);
+  }
+  const resolvedCity = resolved;
   const cityId = resolvedCity?.id ?? null;
   const photoUrl = String(formData.get('photoUrl') ?? '').trim() || null;
   const yearsRaw = String(formData.get('yearsInPractice') ?? '').trim();
@@ -543,10 +553,15 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
   if (!displayName) {
     redirect(`/practitioners/${slug}/edit?error=name-required`);
   }
-  const resolvedCity = await resolveCity(
-    String(formData.get('cityName') ?? ''),
-    String(formData.get('cityState') ?? ''),
-  );
+  // An unresolvable city is an ERROR, not a silent null. Falling through to null clears cityId,
+  // which fails isProfileComplete() -> isListed() and DELETES the practitioner from the search
+  // index — while the save reports success. That is the exact silent-invisibility failure this
+  // whole workstream exists to remove, so it has to surface the way the displayName check does.
+  const resolved = await resolveCity(String(formData.get('cityName') ?? ''));
+  if (resolved === 'invalid') {
+    redirect(`/practitioners/${slug}/edit?error=invalid-city`);
+  }
+  const resolvedCity = resolved;
   const cityId = resolvedCity?.id ?? null;
   const telehealth = formData.get('telehealth') === 'on' || formData.get('telehealth') === 'true';
   const inPerson = formData.get('inPerson') === 'on' || formData.get('inPerson') === 'true';
@@ -769,14 +784,19 @@ export async function deleteOffering(slug: string, formData: FormData): Promise<
  */
 export async function reorderOfferings(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
+  // A malformed or empty payload must SURFACE. Returning quietly leaves useFormStatus flipping
+  // back to idle while the controls still show the reordered numbering they hold locally, so the
+  // practitioner believes the order saved and the public profile disagrees.
   let ids: string[] = [];
   try {
     const parsed = JSON.parse(String(formData.get('orderJson') ?? '[]'));
     if (Array.isArray(parsed)) ids = parsed.filter((v): v is string => typeof v === 'string');
   } catch {
-    return;
+    redirect(`/practitioners/${slug}/edit?error=reorder-failed#offerings`);
   }
-  if (ids.length === 0) return;
+  if (ids.length === 0) {
+    redirect(`/practitioners/${slug}/edit?error=reorder-failed#offerings`);
+  }
 
   await prisma.$transaction(
     ids.map((id, sortOrder) =>

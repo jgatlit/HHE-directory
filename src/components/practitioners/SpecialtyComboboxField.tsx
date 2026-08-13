@@ -80,10 +80,13 @@ export function SpecialtyComboboxField({ options, aliases, initial }: Props) {
   }
 
   // dnd-kit needs a stable identity per item, and the array index stops being one the moment the
-  // list can be reordered. A selection is uniquely identified by its canonical id, or by its raw
-  // label when it is a novel term that has no canonical yet.
+  // list can be reordered. A selection is identified by its canonical id, or by its normalized raw
+  // label when it is a novel term with no canonical yet — deliberately WITHOUT the index, which an
+  // earlier revision included: that made every id change on reorder, remounting rows mid-drag and
+  // stealing focus from a keyboard user who had just lifted a chip. `add()` already rejects
+  // duplicate labels, so the label alone is unique within this list.
   const sortableSelected = useMemo(
-    () => selected.map((s, i) => ({ ...s, id: s.specialtyId ?? `new:${norm(s.rawLabel)}:${i}` })),
+    () => selected.map((s) => ({ ...s, id: s.specialtyId ?? `new:${norm(s.rawLabel)}` })),
     [selected],
   );
   const handleReorder = (next: { specialtyId: string | null; rawLabel: string }[]) =>
