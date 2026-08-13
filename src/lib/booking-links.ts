@@ -1,15 +1,32 @@
 export type PostedBookingRow = { id: string | null; label: string | null; url: string };
 
 /**
+ * Upper bound on posted booking-link rows, enforced by the caller before parsing.
+ *
+ * The reconcile issues one to two sequential round trips per row inside an interactive
+ * transaction, so row count is a direct multiplier on how long that transaction holds a pooled
+ * connection. Nothing caps rows client-side, and a hand-crafted POST can carry thousands — which
+ * would blow the transaction deadline and hold a connection for its full duration on the way out.
+ * A practitioner with more than this many schedulers is not a real case.
+ */
+export const MAX_BOOKING_LINKS = 25;
+
+/**
  * Zip the posted `bookingId` / `bookingLabel` / `bookingUrl` arrays into the rows to persist.
  *
  * Extracted from the server action so it can be tested directly: a `'use server'` module may only
  * export async server actions, so a pure helper cannot live there. The rules below are each load
  * bearing and none of them are obvious from the call site.
  *
- * Returns `null` when a URL fails normalisation, so the caller can redirect with its own error —
- * throwing would be caught by the action's surrounding error handling and reported as a generic
- * failure.
+ * Returns `null` when a URL fails normalisation rather than throwing: routing is the caller's job,
+ * and `redirect()` works by throwing, so it cannot be issued from a pure helper without coupling
+ * this module to Next's navigation.
+ *
+ * ⚠️ Duplicate handling is deliberately narrow. It guarantees only that a persisted id is never
+ * displaced by an id-less row. It does NOT rescue a duplicate group containing two or more
+ * persisted ids — all but the first are dropped from the returned list, and the caller deletes
+ * them. That is CURRENT behaviour pending an operator decision, not a settled design; see the
+ * regression test and `MAX_BOOKING_LINKS` below.
  */
 export function parseBookingLinkRows(
   raw: { ids: string[]; labels: string[]; urls: string[] },

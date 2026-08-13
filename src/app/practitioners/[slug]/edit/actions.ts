@@ -2,13 +2,14 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import * as Sentry from '@sentry/nextjs';
 import type { Prisma } from '@prisma/client';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { syncSpecialtySynonyms } from '@/lib/typesense-synonyms';
 import { draftProfile, type DraftSpecialty } from '@/lib/onboarding-draft';
-import { parseBookingLinkRows } from '@/lib/booking-links';
+import { parseBookingLinkRows, MAX_BOOKING_LINKS } from '@/lib/booking-links';
 import { findPlace, findPlacesByName, splitCityEntry, VIRTUAL_PLACE, type Place } from '@/lib/city-catalog';
 import {
   createAccountLink,
@@ -256,6 +257,12 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   const bookingIds = formData.getAll('bookingId').map((s) => String(s).trim());
   const bookingLabels = formData.getAll('bookingLabel').map((s) => String(s));
   const bookingUrlsRaw = formData.getAll('bookingUrl').map((s) => String(s).trim());
+  // Refuse rather than truncate. Silently keeping the first N would drop links the practitioner
+  // can still see in their own form, which is the failure mode this whole workstream exists to
+  // remove; and the row count directly multiplies how long the reconcile holds its transaction.
+  if (bookingUrlsRaw.length > MAX_BOOKING_LINKS) {
+    redirect(`/practitioners/${slug}/edit?error=too-many-booking-links`);
+  }
   const bookingLinks = parseBookingLinkRows(
     { ids: bookingIds, labels: bookingLabels, urls: bookingUrlsRaw },
     normalizeBookingUrl,
@@ -370,6 +377,15 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
         // saying so is the difference between noticing that and not — an earlier revision of
         // this code churned ids on every save and the silent create is precisely what hid it.
         if (b.id) {
+          // Sentry, not just console: the comment above claims this is how the id-churn class
+          // gets NOTICED, and a warn line in Vercel function logs with no alert on it is a
+          // forensic breadcrumb rather than a detector. Two opaque cuids, no PII.
+          // It also gives the forged-id path an audit trail, which the ownership check alone
+          // (updateMany scoped by practitionerId) does not produce.
+          Sentry.captureMessage('booking-links: posted id matched no row', {
+            level: 'warning',
+            extra: { practitionerId: target.id, postedId: b.id },
+          });
           console.warn(
             '[booking-links] posted id matched no row; creating instead',
             JSON.stringify({ practitionerId: target.id, postedId: b.id }),
