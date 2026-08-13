@@ -1,14 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { parseBookingLinkRows, MAX_BOOKING_LINKS } from '@/lib/booking-links';
+import {
+  parseBookingLinkRows,
+  duplicateBookingRowKeys,
+  MAX_BOOKING_LINKS,
+} from '@/lib/booking-links';
 
 /**
- * Guards the zip/dedupe rules behind in-place booking-link reconciliation.
+ * Guards the zip rules behind in-place booking-link reconciliation.
  *
  * The invariant every test here defends is the same one: a row that already exists in the
  * database must keep its id across a save. `Offering.bookingLinkId` and the practitioner's
  * designated hero CTA both point at that id, so a row silently swapping identity takes those
  * references with it — and it does so without any error, which is why it needs tests rather
  * than review attention.
+ *
+ * There is deliberately **no dedupe** to guard: a Booking Link is a unique instance, not a unique
+ * URL (operator decision 2026-08-13). Collapsing rows that shared a URL used to delete one by id,
+ * which is the very identity loss this file exists to prevent. Accidental duplicates are surfaced
+ * advisorily by `duplicateBookingRowKeys` instead — see the second describe block.
  */
 
 /**
@@ -62,42 +71,42 @@ describe('parseBookingLinkRows', () => {
     expect(rows([''], ['a'], ['javascript:alert(1)'])).toBeNull();
   });
 
-  it('REGRESSION: a duplicate id-less row must not displace a persisted identity', () => {
-    // Reachable in ordinary use: add a row, paste a URL you already use, drag it above the
-    // original. First-occurrence-wins would keep the id-less row, so the persisted row gets
-    // deleted and recreated — the exact id churn in-place reconciliation exists to remove.
-    const out = rows(
-      ['', 'Y'],
-      ['new row', 'original'],
-      ['https://cal.com/same', 'https://cal.com/same'],
-    );
-    expect(out).toHaveLength(1);
-    expect(out![0].id).toBe('Y');
-  });
-
-  it('does NOT collapse spelling variants — production does not canonicalise', () => {
-    // Documents real behaviour rather than hoped-for behaviour: www/trailing-slash variants of
-    // one scheduler ship as two independent links, because normalizeBookingUrl returns the URL
-    // as given. If canonicalisation is ever added, this test should fail and be re-decided.
+  it('keeps spelling variants as separate links — production does not canonicalise', () => {
+    // Documents real behaviour: normalizeBookingUrl returns the URL as given, so www/trailing-slash
+    // variants are simply two different strings. If canonicalisation is ever added this should fail.
     const out = rows(['X', 'Y'], ['a', 'b'], ['https://www.cal.com/same/', 'https://cal.com/same']);
     expect(out).toHaveLength(2);
     expect(out!.map((r) => r.id)).toEqual(['X', 'Y']);
   });
 
-  it('PINS UNDECIDED BEHAVIOUR: a duplicate group with two persisted ids drops all but the first', () => {
-    // ⚠️ NOT a ratified design — this pins current behaviour so that changing it is deliberate.
-    // The dropped row is DELETED by the reconcile, and once Offering.bookingLinkId exists with
-    // onDelete: Cascade, that silently unlinks every offering pointing at it. The practitioner
-    // action that reaches this is ordinary (two labelled buttons repointed at one scheduler).
-    // Operator decision pending — error out, drop the dedupe, or migrate the loser's references.
-    // Whichever is chosen, this test should be updated to assert it, not left as the answer.
-    const out = rows(['X', 'Y'], ['a', 'b'], ['https://cal.com/same', 'https://cal.com/same']);
-    expect(out).toEqual([{ id: 'X', label: 'a', url: 'https://cal.com/same' }]);
+  it('APPROVED DESIGN: the same scheduler may appear on several links, each keeping its own id', () => {
+    // A Booking Link is a unique INSTANCE, not a unique URL (operator decision 2026-08-13). This is
+    // what lets one Acuity calendar back three differently-named buttons, each wired to its own
+    // Offering. The previous dedupe collapsed these and DELETED the loser by id, which would have
+    // silently unlinked its offerings once the FK lands.
+    const out = rows(
+      ['X', 'Y', 'Z'],
+      ['Free consult', 'Root Cause Release', 'Human Design'],
+      ['https://cal.com/same', 'https://cal.com/same', 'https://cal.com/same'],
+    );
+    expect(out).toHaveLength(3);
+    expect(out!.map((r) => r.id)).toEqual(['X', 'Y', 'Z']);
+    expect(out!.map((r) => r.label)).toEqual(['Free consult', 'Root Cause Release', 'Human Design']);
   });
 
-  it('keeps the label of the surviving row, not the duplicate', () => {
-    const out = rows(['X', ''], ['keep me', 'drop me'], ['https://cal.com/s', 'https://cal.com/s']);
-    expect(out![0].label).toBe('keep me');
+  it('preserves a brand-new row alongside an existing one on the same URL', () => {
+    // The identity-inversion case that used to require special handling simply cannot arise now:
+    // nothing is dropped, so nothing can displace a persisted id.
+    const out = rows(['', 'Y'], ['new', 'original'], ['https://cal.com/s', 'https://cal.com/s']);
+    expect(out).toEqual([
+      { id: null, label: 'new', url: 'https://cal.com/s' },
+      { id: 'Y', label: 'original', url: 'https://cal.com/s' },
+    ]);
+  });
+
+  it('keeps every row label — none is discarded in favour of another', () => {
+    const out = rows(['X', ''], ['first', 'second'], ['https://cal.com/s', 'https://cal.com/s']);
+    expect(out!.map((r) => r.label)).toEqual(['first', 'second']);
   });
 
   it('handles a shorter bookingId array without corrupting alignment', () => {
@@ -120,5 +129,49 @@ describe('parseBookingLinkRows', () => {
     const many = Array.from({ length: MAX_BOOKING_LINKS + 5 }, (_, i) => `https://cal.com/x${i}`);
     // The parser itself does not enforce it — proving the caller must.
     expect(rows(many.map(() => ''), many.map(() => 'l'), many)).toHaveLength(many.length);
+  });
+});
+
+describe('duplicateBookingRowKeys — the advisory that replaced the dedupe', () => {
+  const row = (id: string, label: string, url: string) => ({ id, label, url });
+
+  it('does NOT flag the same scheduler under different names — that is the feature', () => {
+    // The whole point of instance-based links. Warning here would train practitioners to ignore it.
+    const dupes = duplicateBookingRowKeys([
+      row('a', 'Free consult', 'https://cal.com/s'),
+      row('b', 'Deep dive', 'https://cal.com/s'),
+    ]);
+    expect(dupes.size).toBe(0);
+  });
+
+  it('flags rows identical on BOTH url and label — the double-paste signature', () => {
+    const dupes = duplicateBookingRowKeys([
+      row('a', 'Free consult', 'https://cal.com/s'),
+      row('b', 'Free consult', 'https://cal.com/s'),
+    ]);
+    // Both are flagged, not just the second — the practitioner needs to see the pair.
+    expect(dupes).toEqual(new Set(['a', 'b']));
+  });
+
+  it('ignores case and surrounding whitespace when comparing', () => {
+    const dupes = duplicateBookingRowKeys([
+      row('a', 'Free Consult', 'https://cal.com/s'),
+      row('b', '  free consult ', ' https://CAL.com/s '.trim().replace('CAL', 'cal')),
+    ]);
+    expect(dupes.size).toBe(2);
+  });
+
+  it('ignores blank rows so an empty new row never warns', () => {
+    const dupes = duplicateBookingRowKeys([row('a', '', ''), row('b', '', '')]);
+    expect(dupes.size).toBe(0);
+  });
+
+  it('flags only the duplicated pair, leaving unrelated rows alone', () => {
+    const dupes = duplicateBookingRowKeys([
+      row('a', 'Intro', 'https://cal.com/x'),
+      row('b', 'Intro', 'https://cal.com/x'),
+      row('c', 'Other', 'https://cal.com/y'),
+    ]);
+    expect(dupes).toEqual(new Set(['a', 'b']));
   });
 });

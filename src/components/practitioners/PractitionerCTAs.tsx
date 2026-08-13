@@ -1,6 +1,8 @@
 import { Calendar, Globe, ChevronRight } from 'lucide-react';
 
-type BookingLink = { label?: string | null; url: string };
+/** `id` is required as the React key: the same scheduler URL may legitimately appear on several
+ *  links under different names, so the URL is no longer a unique identity. */
+type BookingLink = { id: string; label?: string | null; url: string };
 type Props = {
   bookingLinks?: BookingLink[];
   websiteUrl?: string | null;
@@ -76,7 +78,7 @@ export function PractitionerCTAs({ bookingLinks = [], websiteUrl, firstSessionPr
 
       {moreBookings.map((b) => (
         <a
-          key={b.url}
+          key={b.id}
           href={b.url}
           target="_blank"
           rel="noopener noreferrer"

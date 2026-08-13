@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { SortableList } from '@/components/practitioners/SortableList';
+import { duplicateBookingRowKeys } from '@/lib/booking-links';
 
 export type BookingLinkInput = { id: string; label: string; url: string };
 /**
@@ -66,6 +67,10 @@ export function BookingLinksField({ initial }: Props) {
     announce();
   };
 
+  // Advisory only — the same scheduler under DIFFERENT names is the feature, so only rows
+  // identical on both URL and label are flagged. Never blocks the save.
+  const dupes = duplicateBookingRowKeys(rows);
+
   return (
     <div className="space-y-2" ref={root}>
       <SortableList items={rows} onReorder={setRows}>
@@ -92,6 +97,12 @@ export function BookingLinksField({ initial }: Props) {
                 placeholder="https://cal.com/your-username/intro-consult"
                 className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
               />
+              {dupes.has(row.id) && (
+                <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                  Another link has this same name and address. That is fine if you meant it — give
+                  them different names if you did not.
+                </p>
+              )}
             </div>
             <button
               type="button"

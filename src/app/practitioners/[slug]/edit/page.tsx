@@ -232,6 +232,22 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             </p>
           </Card>
         )}
+        {searchParams.error === 'profile-changed-elsewhere' && (
+          <Card className="border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive">
+              Someone else saved this profile while you had it open, so nothing was changed —
+              saving would have quietly discarded their edits. Reload the page to pick up their
+              version, then make your changes again.
+            </p>
+          </Card>
+        )}
+        {searchParams.error === 'too-many-booking-links' && (
+          <Card className="border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive">
+              That is more booking links than we can save at once. Remove a few and try again.
+            </p>
+          </Card>
+        )}
         {searchParams.error === 'payouts-not-ready' && (
           <Card className="border-destructive/30 bg-destructive/5 p-3">
             <p className="text-xs text-destructive">
@@ -265,6 +281,14 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
 
         <Card className="p-6 sm:p-8">
           <form action={action} className="space-y-5">
+            {/* Optimistic-concurrency token. Compared server-side before any write, so a save from
+                a stale tab (or from an admin editing this profile in support) is refused instead of
+                silently discarding the other editor's rows. */}
+            <input
+              type="hidden"
+              name="profileUpdatedAt"
+              value={practitioner.updatedAt.toISOString()}
+            />
             <div className="space-y-1.5">
               <h1 className="text-xl font-semibold tracking-tight">Edit profile</h1>
               <p className="text-xs text-muted-foreground">

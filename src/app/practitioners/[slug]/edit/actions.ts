@@ -263,6 +263,28 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   if (bookingUrlsRaw.length > MAX_BOOKING_LINKS) {
     redirect(`/practitioners/${slug}/edit?error=too-many-booking-links`);
   }
+
+  // Concurrency guard. This form is a last-write-wins document — child collections are rewritten
+  // wholesale, so a client holding a stale view destroys rows it never knew existed, silently.
+  // The realistic second editor is not a second tab: `authorizeForSlug` lets any ADMIN save any
+  // practitioner's profile, so an operator fixing someone's profile in support while they have it
+  // open is the case that matters.
+  //
+  // Deliberately the SIMPLE version (operator ruling 2026-08-13: rare, defer the elaborate one).
+  // `Practitioner.updatedAt` is already `@updatedAt`, so the version token costs no schema change,
+  // and comparing it before the transaction — rather than inside — keeps `redirect()` out of a
+  // callback that would swallow the throw it works by. That leaves a millisecond-wide window where
+  // two saves could still interleave; an accepted trade for six lines on a rare event.
+  const postedVersion = String(formData.get('profileUpdatedAt') ?? '');
+  if (postedVersion) {
+    const current = await prisma.practitioner.findUnique({
+      where: { id: target.id },
+      select: { updatedAt: true },
+    });
+    if (current && current.updatedAt.toISOString() !== postedVersion) {
+      redirect(`/practitioners/${slug}/edit?error=profile-changed-elsewhere`);
+    }
+  }
   const bookingLinks = parseBookingLinkRows(
     { ids: bookingIds, labels: bookingLabels, urls: bookingUrlsRaw },
     normalizeBookingUrl,
