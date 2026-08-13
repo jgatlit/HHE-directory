@@ -41,6 +41,8 @@ type Props = {
     drafted?: string;
     source?: string;
     whop?: string;
+    /** Echoed-back concurrency token — see the hidden `profileUpdatedAt` field below. */
+    v?: string;
   };
 };
 
@@ -235,9 +237,16 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
         {searchParams.error === 'profile-changed-elsewhere' && (
           <Card className="border-destructive/30 bg-destructive/5 p-3">
             <p className="text-xs text-destructive">
-              Someone else saved this profile while you had it open, so nothing was changed —
-              saving would have quietly discarded their edits. Reload the page to pick up their
-              version, then make your changes again.
+              This profile changed somewhere else while you had it open, so nothing was saved —
+              saving would have quietly discarded that change. Your edits are still here; reload
+              the page to pick up the newer version, then reapply them.
+            </p>
+            {/* Deliberately not "someone else saved this". A background update can move the row
+                without any person editing it — a Whop payout webhook, a subscription change, an
+                admin resetting a trial — because `@updatedAt` fires on every column. Naming a
+                culprit that may not exist would be a worse lie than being vague. */}
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Saving again without reloading will keep being refused, on purpose.
             </p>
           </Card>
         )}
@@ -283,11 +292,18 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           <form action={action} className="space-y-5">
             {/* Optimistic-concurrency token. Compared server-side before any write, so a save from
                 a stale tab (or from an admin editing this profile in support) is refused instead of
-                silently discarding the other editor's rows. */}
+                silently discarding the other editor's rows.
+
+                On a refused save the action echoes the token back as `?v=`, and we re-render THAT
+                rather than the current server value. The refusal is a soft navigation, so this
+                form stays mounted with the practitioner's typed text intact — but React would
+                refresh a server-valued token in place, and the next click on Save would then match
+                and write the stale data the guard just blocked. Echoing keeps it armed until a
+                real reload. */}
             <input
               type="hidden"
               name="profileUpdatedAt"
-              value={practitioner.updatedAt.toISOString()}
+              value={searchParams.v ?? practitioner.updatedAt.toISOString()}
             />
             <div className="space-y-1.5">
               <h1 className="text-xl font-semibold tracking-tight">Edit profile</h1>

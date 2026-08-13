@@ -153,10 +153,22 @@ describe('duplicateBookingRowKeys — the advisory that replaced the dedupe', ()
     expect(dupes).toEqual(new Set(['a', 'b']));
   });
 
-  it('ignores case and surrounding whitespace when comparing', () => {
+  it('ignores case and surrounding whitespace in BOTH url and label', () => {
+    // The raw literal is passed through untouched — an earlier version pre-normalised it with
+    // .trim().replace(), so the url half of the comparison was never actually exercised and
+    // deleting `.trim().toLowerCase()` from row.url left every test green.
     const dupes = duplicateBookingRowKeys([
       row('a', 'Free Consult', 'https://cal.com/s'),
-      row('b', '  free consult ', ' https://CAL.com/s '.trim().replace('CAL', 'cal')),
+      row('b', '  free consult ', '  https://CAL.com/s  '),
+    ]);
+    expect(dupes).toEqual(new Set(['a', 'b']));
+  });
+
+  it('is case-insensitive on the URL alone, with labels already identical', () => {
+    // Isolates the url half so a regression there cannot hide behind the label comparison.
+    const dupes = duplicateBookingRowKeys([
+      row('a', 'same', 'https://cal.com/s'),
+      row('b', 'same', 'HTTPS://CAL.COM/S'),
     ]);
     expect(dupes.size).toBe(2);
   });
