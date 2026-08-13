@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { syncSpecialtySynonyms } from '@/lib/typesense-synonyms';
 import { draftProfile, type DraftSpecialty } from '@/lib/onboarding-draft';
+import { parseBookingLinkRows } from '@/lib/booking-links';
 import { findPlace, findPlacesByName, splitCityEntry, VIRTUAL_PLACE, type Place } from '@/lib/city-catalog';
 import {
   createAccountLink,
@@ -249,28 +250,18 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     redirect(`/practitioners/${slug}/edit?error=name-required`);
   }
 
-  // Booking links: bookingId/bookingLabel/bookingUrl triples zipped by index. Skip empty
-  // rows, validate each URL against the provider allowlist, dedupe by normalized URL.
-  //
-  // `bookingId` carries each row's existing identity back to us so links can be updated IN PLACE.
-  // A row with no id is new. Clearing a row's URL drops it from this list, which is what marks it
-  // for deletion below — the same gesture as removing the row outright.
+  // Booking links: bookingId/bookingLabel/bookingUrl triples zipped by index. `bookingId` carries
+  // each row's existing identity back to us so links can be updated IN PLACE; a row with no id is
+  // new. Zip/dedupe rules live in parseBookingLinkRows so they can be tested directly.
   const bookingIds = formData.getAll('bookingId').map((s) => String(s).trim());
   const bookingLabels = formData.getAll('bookingLabel').map((s) => String(s));
   const bookingUrlsRaw = formData.getAll('bookingUrl').map((s) => String(s).trim());
-  const bookingLinks: { id: string | null; label: string | null; url: string }[] = [];
-  const seenBookingUrls = new Set<string>();
-  for (let i = 0; i < bookingUrlsRaw.length; i++) {
-    const raw = bookingUrlsRaw[i];
-    if (!raw) continue;
-    const url = normalizeBookingUrl(raw);
-    if (!url) {
-      redirect(`/practitioners/${slug}/edit?error=invalid-booking-url`);
-    }
-    if (seenBookingUrls.has(url)) continue;
-    seenBookingUrls.add(url);
-    const label = (bookingLabels[i] ?? '').trim() || null;
-    bookingLinks.push({ id: bookingIds[i] || null, label, url });
+  const bookingLinks = parseBookingLinkRows(
+    { ids: bookingIds, labels: bookingLabels, urls: bookingUrlsRaw },
+    normalizeBookingUrl,
+  );
+  if (bookingLinks === null) {
+    redirect(`/practitioners/${slug}/edit?error=invalid-booking-url`);
   }
 
   // City coords for haversine — resolved alongside the city itself, so a practitioner-created
@@ -373,12 +364,31 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
       // An id that resolved to nothing falls through to a create, so the practitioner's row is
       // still saved. Dropping it silently would lose a link they can see in the form.
       if (updated.count === 0) {
+        // A posted id that matches nothing is the signature of a STALE CLIENT: the browser is
+        // holding an id the database no longer has, which means something is recreating rows
+        // that were supposed to be updated in place. It is never expected in normal use, and
+        // saying so is the difference between noticing that and not — an earlier revision of
+        // this code churned ids on every save and the silent create is precisely what hid it.
+        if (b.id) {
+          console.warn(
+            '[booking-links] posted id matched no row; creating instead',
+            JSON.stringify({ practitionerId: target.id, postedId: b.id }),
+          );
+        }
         await tx.bookingLink.create({
           data: { practitionerId: target.id, label: b.label, url: b.url, sortOrder: idx },
         });
       }
     }
-  });
+    },
+    // Raised from Prisma's 5s default. This transaction is a chain of SEQUENTIAL round trips
+    // whose length scales with the practitioner's own data — roughly five per specialty
+    // (resolveSelection plus two counts) and one to two per booking link. At Neon-pooler
+    // latency a well-filled profile can approach the default, and a timeout here is not a
+    // partial write but total loss of the save: P2028 unwinds every statement and the redirect
+    // never runs, so the practitioner sees only a generic error.
+    { timeout: 15_000 },
+  );
 
   await indexPractitioner(target.id).catch((err) =>
     console.error('Typesense reindex failed:', err),

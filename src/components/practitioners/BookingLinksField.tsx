@@ -45,13 +45,29 @@ export function BookingLinksField({ initial }: Props) {
     })),
   );
 
+  const root = useRef<HTMLDivElement>(null);
+  /**
+   * Adding or removing a row changes React state and emits no DOM event, so the profile form's
+   * unsaved-changes guard cannot see it — the same blind spot SortableList already announces
+   * around for drag-reorder. Removing a link was the live case: click X, click Cancel, and the
+   * guard stayed silent while a booking link went missing.
+   */
+  const announce = () =>
+    root.current?.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+
   const update = (id: string, patch: Partial<Omit<Row, 'id' | 'dbId'>>) =>
     setRows((r) => r.map((row) => (row.id === id ? { ...row, ...patch } : row)));
-  const remove = (id: string) => setRows((r) => r.filter((row) => row.id !== id));
-  const add = () => setRows((r) => [...r, { id: mint(), dbId: '', label: '', url: '' }]);
+  const remove = (id: string) => {
+    setRows((r) => r.filter((row) => row.id !== id));
+    announce();
+  };
+  const add = () => {
+    setRows((r) => [...r, { id: mint(), dbId: '', label: '', url: '' }]);
+    announce();
+  };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" ref={root}>
       <SortableList items={rows} onReorder={setRows}>
         {(row, _i, handle) => (
           <div className="flex items-start gap-2 pb-2">
