@@ -1,3 +1,9 @@
+> ⚠️ **SUPERSEDED 2026-08-13 — this brief's job is DONE.** The review + reconciliation it asks for
+> happened; the canonical design is now vault `art_c688ea69482744d19c89` (v2) and the task set lives
+> in vault project `prj_63362baf8f58464c904e`.
+> **→ Read `docs/2026-08-13-booking-checkout-handoff.md` instead.**
+> Kept as a point-in-time record of what the reconciliation was asked to resolve.
+
 # Next session — review + refactor the booking/checkout flow
 
 **Written**: 2026-08-13, closing the session that shipped PRs #47/#48

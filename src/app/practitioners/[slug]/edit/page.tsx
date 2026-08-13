@@ -400,8 +400,25 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
               label="Booking links"
               hint="Your scheduling links (Cal.com, Calendly, SavvyCal, Acuity, etc.). Each appears as its own button on your profile. Add an optional label per link (e.g. 'Free 15-min intro'). Leave empty if you're not taking new bookings."
             >
+              {/* The key is load-bearing. Saving soft-redirects to ?saved=1, which keeps this
+                  subtree MOUNTED (same trap documented in UnsavedChangesBar) — so the field's
+                  lazy useState initializer never re-runs and a row added in this page session
+                  would keep dbId='' forever, being deleted and recreated on every later save.
+                  Keying on the persisted ids remounts it exactly when that set changes, and
+                  deliberately NOT when it hasn't: the invalid-URL redirect fires before the
+                  transaction, so a rejected save leaves the key identical and the practitioner's
+                  typed input survives.
+
+                  Accepted trade-off: when a save DOES change the id set, the remount reseeds from
+                  the server, so a second row left half-filled (a label typed, URL still blank —
+                  the server skips it) disappears. That is a visible row vanishing after an
+                  explicit save, against a silent id churn that would sever every offering's
+                  scheduler link; and showing exactly what was persisted is defensible on its own
+                  terms. Do not "fix" it by dropping the key. */}
               <BookingLinksField
+                key={practitioner.bookingLinks.map((b) => b.id).join(',')}
                 initial={practitioner.bookingLinks.map((b) => ({
+                  id: b.id,
                   label: b.label ?? '',
                   url: b.url,
                 }))}

@@ -2,12 +2,14 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import * as Sentry from '@sentry/nextjs';
 import type { Prisma } from '@prisma/client';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { syncSpecialtySynonyms } from '@/lib/typesense-synonyms';
 import { draftProfile, type DraftSpecialty } from '@/lib/onboarding-draft';
+import { parseBookingLinkRows, MAX_BOOKING_LINKS } from '@/lib/booking-links';
 import { findPlace, findPlacesByName, splitCityEntry, VIRTUAL_PLACE, type Place } from '@/lib/city-catalog';
 import {
   createAccountLink,
@@ -249,23 +251,24 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     redirect(`/practitioners/${slug}/edit?error=name-required`);
   }
 
-  // Booking links: paired bookingLabel/bookingUrl rows zipped by index. Skip empty
-  // rows, validate each URL against the provider allowlist, dedupe by normalized URL.
+  // Booking links: bookingId/bookingLabel/bookingUrl triples zipped by index. `bookingId` carries
+  // each row's existing identity back to us so links can be updated IN PLACE; a row with no id is
+  // new. Zip/dedupe rules live in parseBookingLinkRows so they can be tested directly.
+  const bookingIds = formData.getAll('bookingId').map((s) => String(s).trim());
   const bookingLabels = formData.getAll('bookingLabel').map((s) => String(s));
   const bookingUrlsRaw = formData.getAll('bookingUrl').map((s) => String(s).trim());
-  const bookingLinks: { label: string | null; url: string }[] = [];
-  const seenBookingUrls = new Set<string>();
-  for (let i = 0; i < bookingUrlsRaw.length; i++) {
-    const raw = bookingUrlsRaw[i];
-    if (!raw) continue;
-    const url = normalizeBookingUrl(raw);
-    if (!url) {
-      redirect(`/practitioners/${slug}/edit?error=invalid-booking-url`);
-    }
-    if (seenBookingUrls.has(url)) continue;
-    seenBookingUrls.add(url);
-    const label = (bookingLabels[i] ?? '').trim() || null;
-    bookingLinks.push({ label, url });
+  // Refuse rather than truncate. Silently keeping the first N would drop links the practitioner
+  // can still see in their own form, which is the failure mode this whole workstream exists to
+  // remove; and the row count directly multiplies how long the reconcile holds its transaction.
+  if (bookingUrlsRaw.length > MAX_BOOKING_LINKS) {
+    redirect(`/practitioners/${slug}/edit?error=too-many-booking-links`);
+  }
+  const bookingLinks = parseBookingLinkRows(
+    { ids: bookingIds, labels: bookingLabels, urls: bookingUrlsRaw },
+    normalizeBookingUrl,
+  );
+  if (bookingLinks === null) {
+    redirect(`/practitioners/${slug}/edit?error=invalid-booking-url`);
   }
 
   // City coords for haversine — resolved alongside the city itself, so a practitioner-created
@@ -298,7 +301,6 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     const rawLabels = resolved.map((r) => r.rawLabel);
 
     await tx.practitionerSpecialty.deleteMany({ where: { practitionerId: target.id } });
-    await tx.bookingLink.deleteMany({ where: { practitionerId: target.id } });
     await tx.practitioner.update({
       where: { id: target.id },
       data: {
@@ -335,16 +337,74 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
             specialty: { connect: { id: r.specialtyId } },
           })),
         },
-        bookingLinks: {
-          create: bookingLinks.map((b, idx) => ({
-            label: b.label,
-            url: b.url,
-            sortOrder: idx,
-          })),
-        },
       },
     });
-  });
+
+    // Booking links are reconciled IN PLACE — never deleted and recreated.
+    //
+    // The original Wedge 2B implementation deleted every link and recreated them from the posted
+    // rows. That was reasonable while BookingLink was a leaf table nobody referenced: order came
+    // from submission order, so recreating from scratch made `sortOrder: idx` trivially correct.
+    // It stops being reasonable the moment anything points at BookingLink.id — a delete-recreate
+    // mints a fresh cuid on EVERY profile save, so an offering's link, or a designated hero CTA,
+    // would be severed by a practitioner merely editing their bio.
+    //
+    // Reconciling costs one extra hidden field and this block, and it is what makes the id a
+    // durable identity rather than a per-save accident.
+    const keptIds = bookingLinks.map((b) => b.id).filter((id): id is string => !!id);
+    await tx.bookingLink.deleteMany({
+      where: {
+        practitionerId: target.id,
+        ...(keptIds.length > 0 && { id: { notIn: keptIds } }),
+      },
+    });
+    for (let idx = 0; idx < bookingLinks.length; idx++) {
+      const b = bookingLinks[idx];
+      // updateMany scoped by practitionerId IS the ownership check: a forged or stale id matches
+      // nothing and updates zero rows, rather than retargeting another practitioner's link.
+      const updated = b.id
+        ? await tx.bookingLink.updateMany({
+            where: { id: b.id, practitionerId: target.id },
+            data: { label: b.label, url: b.url, sortOrder: idx },
+          })
+        : { count: 0 };
+      // An id that resolved to nothing falls through to a create, so the practitioner's row is
+      // still saved. Dropping it silently would lose a link they can see in the form.
+      if (updated.count === 0) {
+        // A posted id that matches nothing is the signature of a STALE CLIENT: the browser is
+        // holding an id the database no longer has, which means something is recreating rows
+        // that were supposed to be updated in place. It is never expected in normal use, and
+        // saying so is the difference between noticing that and not — an earlier revision of
+        // this code churned ids on every save and the silent create is precisely what hid it.
+        if (b.id) {
+          // Sentry, not just console: the comment above claims this is how the id-churn class
+          // gets NOTICED, and a warn line in Vercel function logs with no alert on it is a
+          // forensic breadcrumb rather than a detector. Two opaque cuids, no PII.
+          // It also gives the forged-id path an audit trail, which the ownership check alone
+          // (updateMany scoped by practitionerId) does not produce.
+          Sentry.captureMessage('booking-links: posted id matched no row', {
+            level: 'warning',
+            extra: { practitionerId: target.id, postedId: b.id },
+          });
+          console.warn(
+            '[booking-links] posted id matched no row; creating instead',
+            JSON.stringify({ practitionerId: target.id, postedId: b.id }),
+          );
+        }
+        await tx.bookingLink.create({
+          data: { practitionerId: target.id, label: b.label, url: b.url, sortOrder: idx },
+        });
+      }
+    }
+    },
+    // Raised from Prisma's 5s default. This transaction is a chain of SEQUENTIAL round trips
+    // whose length scales with the practitioner's own data — roughly five per specialty
+    // (resolveSelection plus two counts) and one to two per booking link. At Neon-pooler
+    // latency a well-filled profile can approach the default, and a timeout here is not a
+    // partial write but total loss of the save: P2028 unwinds every statement and the redirect
+    // never runs, so the practitioner sees only a generic error.
+    { timeout: 15_000 },
+  );
 
   await indexPractitioner(target.id).catch((err) =>
     console.error('Typesense reindex failed:', err),
