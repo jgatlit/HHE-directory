@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
+import { sendEmail } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
 
 export const runtime = 'nodejs';
@@ -113,8 +114,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     console.error('[trial-sweep] RESEND_API_KEY is not set; cannot send warnings');
     return NextResponse.json({ error: 'RESEND_API_KEY is not configured' }, { status: 500 });
   }
-  const from = process.env.EMAIL_FROM ?? 'Natural Health Pros <onboarding@resend.dev>';
-
   const today = startOfUTCDay(new Date());
   const summary: Record<BucketLabel, BucketSummary> = {
     'T-14': { matched: 0, sent: 0, skipped: 0, failed: 0 },
@@ -159,14 +158,21 @@ export async function GET(request: Request): Promise<NextResponse> {
       const { subject, text, html } = warningCopy(bucket.offsetDays, p.trialEndsAt, p.slug);
 
       try {
-        const res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from, to: p.user.email, subject, html, text }),
+        await sendEmail({
+          to: p.user.email,
+          subject,
+          html,
+          text,
+          // One warning per practitioner per bucket. Resend de-duplicates on this for 24h, so a
+          // retried or hand-triggered re-run of the sweep cannot warn the same person twice —
+          // a guarantee the bucket math below could only ever approximate, because it was built
+          // around a frozen schema with no "warning sent" column to record the fact.
+          idempotencyKey: `trial-warn-${bucket.label}/${p.id}`,
+          tags: [
+            { name: 'feature', value: 'trial-sweep' },
+            { name: 'bucket', value: bucket.label },
+          ],
         });
-        if (!res.ok) {
-          throw new Error(`Resend ${res.status}: ${JSON.stringify(await res.json())}`);
-        }
         stats.sent += 1;
       } catch (err) {
         // Fail soft: one bad send must not abort the run for everyone else.
