@@ -402,6 +402,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             >
               <BookingLinksField
                 initial={practitioner.bookingLinks.map((b) => ({
+                  id: b.id,
                   label: b.label ?? '',
                   url: b.url,
                 }))}

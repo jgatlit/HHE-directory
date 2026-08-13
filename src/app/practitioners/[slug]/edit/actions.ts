@@ -249,11 +249,16 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     redirect(`/practitioners/${slug}/edit?error=name-required`);
   }
 
-  // Booking links: paired bookingLabel/bookingUrl rows zipped by index. Skip empty
+  // Booking links: bookingId/bookingLabel/bookingUrl triples zipped by index. Skip empty
   // rows, validate each URL against the provider allowlist, dedupe by normalized URL.
+  //
+  // `bookingId` carries each row's existing identity back to us so links can be updated IN PLACE.
+  // A row with no id is new. Clearing a row's URL drops it from this list, which is what marks it
+  // for deletion below — the same gesture as removing the row outright.
+  const bookingIds = formData.getAll('bookingId').map((s) => String(s).trim());
   const bookingLabels = formData.getAll('bookingLabel').map((s) => String(s));
   const bookingUrlsRaw = formData.getAll('bookingUrl').map((s) => String(s).trim());
-  const bookingLinks: { label: string | null; url: string }[] = [];
+  const bookingLinks: { id: string | null; label: string | null; url: string }[] = [];
   const seenBookingUrls = new Set<string>();
   for (let i = 0; i < bookingUrlsRaw.length; i++) {
     const raw = bookingUrlsRaw[i];
@@ -265,7 +270,7 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     if (seenBookingUrls.has(url)) continue;
     seenBookingUrls.add(url);
     const label = (bookingLabels[i] ?? '').trim() || null;
-    bookingLinks.push({ label, url });
+    bookingLinks.push({ id: bookingIds[i] || null, label, url });
   }
 
   // City coords for haversine — resolved alongside the city itself, so a practitioner-created
@@ -298,7 +303,6 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     const rawLabels = resolved.map((r) => r.rawLabel);
 
     await tx.practitionerSpecialty.deleteMany({ where: { practitionerId: target.id } });
-    await tx.bookingLink.deleteMany({ where: { practitionerId: target.id } });
     await tx.practitioner.update({
       where: { id: target.id },
       data: {
@@ -335,15 +339,45 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
             specialty: { connect: { id: r.specialtyId } },
           })),
         },
-        bookingLinks: {
-          create: bookingLinks.map((b, idx) => ({
-            label: b.label,
-            url: b.url,
-            sortOrder: idx,
-          })),
-        },
       },
     });
+
+    // Booking links are reconciled IN PLACE — never deleted and recreated.
+    //
+    // The original Wedge 2B implementation deleted every link and recreated them from the posted
+    // rows. That was reasonable while BookingLink was a leaf table nobody referenced: order came
+    // from submission order, so recreating from scratch made `sortOrder: idx` trivially correct.
+    // It stops being reasonable the moment anything points at BookingLink.id — a delete-recreate
+    // mints a fresh cuid on EVERY profile save, so an offering's link, or a designated hero CTA,
+    // would be severed by a practitioner merely editing their bio.
+    //
+    // Reconciling costs one extra hidden field and this block, and it is what makes the id a
+    // durable identity rather than a per-save accident.
+    const keptIds = bookingLinks.map((b) => b.id).filter((id): id is string => !!id);
+    await tx.bookingLink.deleteMany({
+      where: {
+        practitionerId: target.id,
+        ...(keptIds.length > 0 && { id: { notIn: keptIds } }),
+      },
+    });
+    for (let idx = 0; idx < bookingLinks.length; idx++) {
+      const b = bookingLinks[idx];
+      // updateMany scoped by practitionerId IS the ownership check: a forged or stale id matches
+      // nothing and updates zero rows, rather than retargeting another practitioner's link.
+      const updated = b.id
+        ? await tx.bookingLink.updateMany({
+            where: { id: b.id, practitionerId: target.id },
+            data: { label: b.label, url: b.url, sortOrder: idx },
+          })
+        : { count: 0 };
+      // An id that resolved to nothing falls through to a create, so the practitioner's row is
+      // still saved. Dropping it silently would lose a link they can see in the form.
+      if (updated.count === 0) {
+        await tx.bookingLink.create({
+          data: { practitionerId: target.id, label: b.label, url: b.url, sortOrder: idx },
+        });
+      }
+    }
   });
 
   await indexPractitioner(target.id).catch((err) =>
