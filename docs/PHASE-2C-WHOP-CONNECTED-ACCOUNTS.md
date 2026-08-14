@@ -295,7 +295,11 @@ whopIdentityProfileId String?                                 // idpf_… for lo
 whopCompanyCreatedAt  DateTime?
 ```
 
-**Gate the public "Buy" button on `whopPayoutsEnabled`, not on any status string.** A `connected` status paired with `payouts_enabled: false` is an *active account restriction*, not incomplete setup — the distinction only shows up in the boolean. Letting a patient pay into an account that can't withdraw is the worst possible failure mode for a pilot.
+**Gate the public "Buy" button on `whopPayoutsEnabled`, not on any status string.** Letting a patient pay into an account that can't withdraw is the worst possible failure mode for a pilot.
+
+> ⚠️ **Amended 2026-08-14 — this applies to the WEBHOOK value only.** The original text continued: *"a `connected` status paired with `payouts_enabled: false` is an active account restriction, not incomplete setup — the distinction only shows up in the boolean."* That is **not safe to apply to a polled read.** A parent-company API key under-reports the boolean: Whop's own `identity_profile.updated` for `idpf_f9VEKuIiqGPc2` carried `payouts_enabled: true` with `linked_companies` populated, while `GET /identity_profiles` returns `false` with `linked_companies: []` for that same profile.
+>
+> So: **`payouts_enabled` is authoritative on the webhook and unreliable on read.** Store what the webhook says; gate checkout on the stored value. Any reconciliation sweep must key on `status: 'approved'` + `payout_status: 'connected'`, which do read accurately — gating a sweep on the polled boolean means it can never open the gate. See `src/app/api/cron/whop-reconcile/route.ts`.
 
 ### 4.5 Publishing an offering — regenerate, don't mutate
 

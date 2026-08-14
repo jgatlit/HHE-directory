@@ -226,7 +226,7 @@ Assert against `sandbox-api.whop.com`:
 - `POST /checkout_configurations` accepts `plan.company_id` (**not** `account_id`), inline `plan.product`, `application_fee_amount`
 - `POST /account_links` for both `account_onboarding` and `payouts_portal`
 - `POST /webhooks` still requires `resource_id`
-- `GET /payout_accounts/{biz}` 404s when no payout account exists
+- ~~`GET /payout_accounts/{biz}` 404s when no payout account exists~~ — **WRONG, corrected 2026-08-13.** It 404s because `biz_…` is the wrong **id type**: the endpoint keys on the `poact_…` payout-account id. `GET /payout_accounts/biz_8RDm3wyLlTRUPy` 404s while `GET /payout_accounts/poact_RdNctOwjkAMu` returns 200 `connected` — same account. Every call the old `getPayoutStatus(companyId)` made 404'd, and the 404 branch explained it away as "normal pre-KYC state", so reconciliation reported "nothing to see" for every practitioner.
 - `GET /companies?parent_company_id=` lists connected accounts
 
 Nightly, not per-PR — an external dependency in a merge gate is a flaky merge gate.

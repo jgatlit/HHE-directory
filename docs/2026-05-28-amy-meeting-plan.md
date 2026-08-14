@@ -8,6 +8,8 @@ status: build-ready plan — primed 2026-05-29
 purpose: Requirements + prioritized build plan distilled from the 2026-05-28 Amy working session, scoped to this repo.
 ---
 
+> ⚠️ **STALE BLOCKER (point-in-time record; kept as written).** Two lines below still mark Whop config as **blocked** on an "invite-only Whop Platforms API" requiring `sales@whop.com`. That premise is **wrong** — Platforms/Connected Accounts is self-serve; the real blocker was an API-key class/scope problem, fixed in the dashboard. Layer Y shipped 2026-07-29 (PRs #37/#38). **Do not email Whop sales; do not send the outbound templates.** Current truth: `docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md`.
+
 # HHE Directory — Plan from the 2026-05-28 Amy Session
 
 > **Canonical record**: the full meeting note (decisions, quotes, attribution, Ask Zuzu workstream) lives in the vault at
