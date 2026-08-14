@@ -2,6 +2,7 @@ import { CheckCircle2, Clock, CreditCard, ShieldCheck, Sparkles } from 'lucide-r
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { PendingButton } from './PendingButton';
 
 type Props = {
   status: 'NONE' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED';
@@ -21,8 +22,18 @@ type Props = {
    * them they're hidden from it.
    */
   isComplete: boolean;
-  /** Whop checkout URL for our $49/mo product; null until provisioned (Layer X wiring). */
-  checkoutUrl: string | null;
+  /**
+   * PRIMARY path. Mints a per-practitioner checkout carrying `metadata.practitioner_id`, so the
+   * webhook attributes the payment directly. Prefer this over `fallbackCheckoutUrl` always.
+   */
+  subscribeAction: ((formData: FormData) => void | Promise<void>) | null;
+  /**
+   * The generic hosted product page. LAST RESORT — it carries no practitioner metadata, so a
+   * payment through it can only be matched back by EMAIL, which fails silently when someone pays
+   * from a different address than their profile. Used only when `subscribeAction` is unavailable,
+   * so a misconfiguration degrades to "attributable by email" rather than to a dead button.
+   */
+  fallbackCheckoutUrl: string | null;
   priceLabel: string;
 };
 
@@ -46,7 +57,8 @@ export function SubscriptionSection({
   trialEndsAt,
   isAdmin,
   isComplete,
-  checkoutUrl,
+  subscribeAction,
+  fallbackCheckoutUrl,
   priceLabel,
 }: Props) {
   const now = Date.now();
@@ -164,9 +176,18 @@ export function SubscriptionSection({
       {showCta && (
         <>
           <Separator />
-          {checkoutUrl ? (
+          {subscribeAction ? (
+            <form action={subscribeAction}>
+              <PendingButton
+                pendingLabel="Opening checkout…"
+                className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+              >
+                {ctaLabel}
+              </PendingButton>
+            </form>
+          ) : fallbackCheckoutUrl ? (
             <a
-              href={checkoutUrl}
+              href={fallbackCheckoutUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"

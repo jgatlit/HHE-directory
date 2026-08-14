@@ -2,6 +2,7 @@ import { CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { OfferingOrderControls } from '@/components/practitioners/OfferingOrderControls';
+import { PendingButton } from '@/components/practitioners/PendingButton';
 import { Separator } from '@/components/ui/separator';
 
 type Offering = {
@@ -152,13 +153,15 @@ function PublishRow({
           <CheckCircle2 className="h-3 w-3" aria-hidden />
           Live — patients can buy this
         </Badge>
-        <button
+        <PendingButton
+          intent="unpublish"
           formAction={unpublishAction}
           formNoValidate
-          className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          pendingLabel="Unpublishing…"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
         >
           Unpublish
-        </button>
+        </PendingButton>
       </div>
     );
   }
@@ -167,13 +170,15 @@ function PublishRow({
     return (
       <div className="flex items-center justify-between gap-3 border-t pt-3">
         <p className="text-xs text-muted-foreground">Not published — only you can see this.</p>
-        <button
+        <PendingButton
+          intent="publish"
           formAction={publishAction}
           formNoValidate
-          className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          pendingLabel="Publishing…"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
         >
           Publish
-        </button>
+        </PendingButton>
       </div>
     );
   }

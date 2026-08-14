@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Clock, CreditCard, Info } from 'lucide-rea
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { PendingButton } from './PendingButton';
 
 type Action = (formData: FormData) => void | Promise<void>;
 
@@ -87,13 +88,13 @@ export function PaymentsSection({
             license or passport to verify you. It takes about five minutes.
           </span>
         </div>
-        <button
-          type="submit"
-          aria-label={`Set up payments and verify ID for ${slug}`}
-          className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        <PendingButton
+          ariaLabel={`Set up payments and verify ID for ${slug}`}
+          pendingLabel="Opening Whop…"
+          className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
         >
           Set up payments &amp; verify ID
-        </button>
+        </PendingButton>
       </form>
     );
   } else if (!payoutsEnabled) {
@@ -106,13 +107,13 @@ export function PaymentsSection({
     );
     cta = (
       <form action={startWhopOnboardingAction}>
-        <button
-          type="submit"
-          aria-label={`Continue payments verification for ${slug}`}
-          className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        <PendingButton
+          ariaLabel={`Continue payments verification for ${slug}`}
+          pendingLabel="Opening Whop…"
+          className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
         >
           Continue verification
-        </button>
+        </PendingButton>
       </form>
     );
   } else {
@@ -126,13 +127,13 @@ export function PaymentsSection({
       'Your payout account is active — you can take payments and publish offerings to patients.';
     cta = (
       <form action={openPayoutPortalAction}>
-        <button
-          type="submit"
-          aria-label={`Manage payouts for ${slug}`}
-          className="inline-flex h-10 w-full items-center justify-center rounded-md border bg-card text-sm font-medium transition-colors hover:bg-accent"
+        <PendingButton
+          ariaLabel={`Manage payouts for ${slug}`}
+          pendingLabel="Opening payout portal…"
+          className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md border bg-card text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
         >
           Manage payouts
-        </button>
+        </PendingButton>
       </form>
     );
   }

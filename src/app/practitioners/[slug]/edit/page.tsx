@@ -23,6 +23,7 @@ import {
   reorderOfferings as reorderOffering,
   startWhopOnboarding,
   openPayoutPortal,
+  startSubscriptionCheckout,
 } from './actions';
 import { OfferingsEditor } from '@/components/practitioners/OfferingsEditor';
 import { SubscriptionSection } from '@/components/practitioners/SubscriptionSection';
@@ -123,6 +124,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const reorderOfferingsAction = reorderOffering.bind(null, params.slug);
   const startWhopOnboardingAction = startWhopOnboarding.bind(null, params.slug);
   const openPayoutPortalAction = openPayoutPortal.bind(null, params.slug);
+  const startSubscriptionCheckoutAction = startSubscriptionCheckout.bind(null, params.slug);
 
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-14">
@@ -544,7 +546,12 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           trialEndsAt={practitioner.trialEndsAt}
           isAdmin={ownerIsAdmin}
           isComplete={missing.length === 0}
-          checkoutUrl={practitioner.whopSubscriptionCheckoutUrl ?? process.env.WHOP_PLATFORM_CHECKOUT_URL ?? null}
+          // The action mints a per-practitioner checkout carrying metadata.practitioner_id and
+          // reuses whopSubscriptionCheckoutUrl once minted. The generic hosted URL is the last
+          // resort only: it has no metadata, so the webhook can only match the payer by EMAIL —
+          // which fails silently when someone pays from a different address than their profile.
+          subscribeAction={startSubscriptionCheckoutAction}
+          fallbackCheckoutUrl={process.env.WHOP_PLATFORM_CHECKOUT_URL ?? null}
           priceLabel="$49/mo"
         />
 
