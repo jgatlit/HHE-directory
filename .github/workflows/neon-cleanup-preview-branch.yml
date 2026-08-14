@@ -1,0 +1,47 @@
+# Deletes the Neon branch that Vercel provisioned for a PR's preview deployments.
+#
+# WHY THIS EXISTS — this is not housekeeping, it is the fix for a recurring outage.
+#
+# We use Vercel's *managed* Neon integration, where Neon drops a preview branch only when the
+# Vercel DEPLOYMENT is deleted. Vercel retains deployments indefinitely, so branches accumulate
+# permanently — roughly one per PR, forever.
+#
+# Neon Free caps a project at 10 branches INCLUDING main. At the cap, every preview deployment
+# fails with `BUILD_FAILED` / "Resource provisioning failed" in 0ms — before the build starts, so
+# no build logs exist to hunt through. Production is never affected (it reuses `main` and
+# provisions nothing), which is exactly what hides it: the site is green while every PR check is
+# red, and the natural reading is "my diff broke the build".
+#
+# It cannot self-heal. Neon's obsolete-branch cleanup runs "the next time a preview deployment is
+# created" — and at the cap, no preview deployment can be created. The cleanup that would free the
+# cap is gated behind the thing the cap blocks.
+#
+# This has now bitten twice: 9 days dead in July 2026, and again 2026-08-12 → 08-14, during which
+# PRs #47–#53 all merged over a red preview check.
+#
+# `preview/${{ github.head_ref }}` is Vercel's naming convention, verified against the live branch
+# list (git branch `feat/booking-link-instances` → Neon branch `preview/feat/booking-link-instances`).
+#
+# `NEON_API_KEY` is PROJECT-SCOPED to late-leaf-76985577 (verified: it can read this project's
+# branches, and 404s on listing other projects or minting further keys). Do not replace it with a
+# personal or org-scoped key — branch deletion is a control-plane operation and a broader key here
+# would be able to reach every project in the org.
+#
+# Do NOT "fix" the cap instead by disabling per-preview branching. The build command runs
+# `prisma migrate deploy`, so a preview without its own branch would migrate PRODUCTION.
+
+name: Cleanup Neon preview branch
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  delete-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/${{ github.head_ref }}
+          api_key: ${{ secrets.NEON_API_KEY }}
