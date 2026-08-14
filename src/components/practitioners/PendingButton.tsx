@@ -39,7 +39,11 @@ export function PendingButton({
   icon?: React.ReactNode;
 }) {
   const { pending, data } = useFormStatus();
-  const isMine = pending && (intent === undefined || data?.get('intent') === intent);
+  // If `data` is unavailable we cannot tell which button submitted, so fall back to the form's
+  // own pending state rather than resolving to false. Being briefly over-eager (every button in
+  // the row spins) is a visible, self-correcting wrong; resolving to false would silently show
+  // no feedback at all, which is the exact defect this component exists to remove.
+  const isMine = pending && (intent === undefined || !data || data.get('intent') === intent);
 
   return (
     <button
