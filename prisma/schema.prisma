@@ -318,6 +318,14 @@ model WhopProduct {
   interval            ProductInterval @default(ONE_TIME)
   category            String? // offering type label: consultation, product, package, subscription…
 
+  /// DEAD — written by nothing in src/ or scripts/, exposed by no UI, and as of 2026-08-14 read
+  /// by nothing either. Retained per expand/contract; drop in a follow-up once the migration can
+  /// land safely. Do NOT start writing these: `active` reads like a hidden/visible toggle and is
+  /// not one, and the query it used to gate was the public profile's, so setting it false would
+  /// remove an Offering from every public surface with nothing explaining why. Visibility is
+  /// specced as `listingVisibility` in §17.2b, which gates the grid while `bookingLinkId` gates
+  /// the chooser — deliberately two layers, because §4 needs the chooser to list Offerings the
+  /// grid hides.
   active    Boolean  @default(true)
   archived  Boolean  @default(false)
   /// Practitioner-controlled display order. Ties break on price ascending, which is the default

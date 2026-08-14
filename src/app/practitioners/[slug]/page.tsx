@@ -20,10 +20,13 @@ async function loadPractitioner(slug: string) {
       specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
-      whopProducts: {
-        where: { active: true, archived: false },
-        orderBy: OFFERING_ORDER,
-      },
+      // No `active`/`archived` filter. Both columns are dead — written by nothing in src/ or
+      // scripts/ and exposed by no UI — so this filtered on values that were always their
+      // defaults. That made it a trap rather than a feature: `active` reads like a
+      // hidden/visible toggle and is not one, and because it filtered HERE it would have
+      // removed an Offering from every public surface at once, with no UI to explain why.
+      // Visibility lands as `listingVisibility` in §17.2b. See prisma/schema.prisma.
+      whopProducts: { orderBy: OFFERING_ORDER },
     },
   });
 }
