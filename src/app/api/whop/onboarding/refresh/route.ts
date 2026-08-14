@@ -26,7 +26,10 @@ async function authorizeForSlug(slug: string) {
     // own payments section instead lands them somewhere they can see their status and choose
     // to continue, which is also the right destination if their link expired because they
     // walked away mid-flow.
-    const callbackUrl = `/practitioners/${slug}/edit#payments`;
+    // encodeURIComponent the SEGMENT, not just the assembled string. `slug` arrives already
+    // percent-decoded from searchParams and is used before any DB lookup, so `..%2f..%2fadmin`
+    // would otherwise yield a path the browser normalises to /admin after sign-in.
+    const callbackUrl = `/practitioners/${encodeURIComponent(slug)}/edit#payments`;
     redirect(`/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`);
   }
   const practitioner = await prisma.practitioner.findUnique({

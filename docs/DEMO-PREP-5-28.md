@@ -1,5 +1,8 @@
 # Demo Prep — Amy meeting 2026-05-28
 
+> ⚠️ **STALE BLOCKER (point-in-time record; kept as written).** The Q&A and "blocker" notes below state that the **Whop Platforms API is invite-only** and ask who emails `sales@whop.com`. Both are **wrong** — Platforms/Connected Accounts is self-serve, and the real blocker was an API-key class/scope problem fixed in the dashboard. Layer Y shipped 2026-07-29. **Do not send the outbound templates.** Current truth: `docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md`.
+> Note "invite-only **directory**" elsewhere in this doc is a *different, still-correct* claim — it describes the product's own listing model, not Whop.
+
 > **Production URL**: https://hhe-directory.vercel.app
 > **Goal**: 5-7 minute walkthrough that lets Amy feel HHE-curated practitioner discovery as a working product, not a deck.
 > **Wedges proven**: search-as-discovery, HHE-students-first sourcing, click-through to a polished practitioner profile. Payments + booking are Phase 2 (intentionally placeholder).

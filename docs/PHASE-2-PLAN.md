@@ -1,5 +1,9 @@
 # Phase 2 Plan — Post-demo unlocks
 
+> ⚠️ **STALE BLOCKER — the "Whop Platforms API is invite-only" section below (§ 2C) is WRONG and must not be acted on.**
+> "Platforms" and "Connected Accounts" are the same **self-serve** product; `parent_company_id` is a documented optional field on the public `POST /api/v1/companies`. The original "proof" probed `/api/v2/connected_accounts` — **a path that does not exist** — and read the 401 as an entitlement gate. The real blocker was an API-key *class* problem (App key vs Company key), fixed in the dashboard in minutes.
+> **Do not email `sales@whop.com`. Do not send the templates in `docs/outbound/`.** Layer Y shipped 2026-07-29 (PRs #37/#38). Current truth: `docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md`.
+
 > **Status when this was written**: Phase 1 shipped + verified at https://hhe-directory.vercel.app. Amy meeting scheduled 2026-05-28. This doc is the **option space** for what ships after that meeting; the specific sequencing is operator-locked post-meeting based on Amy + Blake input.
 
 ## Phase 1 retrospective (what's live)

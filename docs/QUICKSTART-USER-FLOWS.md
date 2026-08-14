@@ -36,4 +36,4 @@ A practitioner shows in **search + featured** only when their profile is **compl
 
 ## Payments at a glance
 - **Layer X** (LIVE): practitioner pays **$49/mo** to be listed (first 30-day period free) → our Whop → `/api/whop/webhook` flips them to ACTIVE. Config: `docs/LAYER-X-SUBSCRIPTION.md`.
-- **Layer Y** (deferred): patients pay practitioners for their offerings via connected Whop accounts — gated on the invite-only Whop Platforms grant.
+- **Layer Y** (LIVE since 2026-07-29, PRs #37/#38): patients pay practitioners for their offerings via connected Whop accounts. ⚠️ The former "gated on the invite-only Whop Platforms grant" note was **wrong on both counts** — Platforms/Connected Accounts is **self-serve** (`parent_company_id` is a documented optional field on the public `POST /api/v1/companies`), and the work shipped. There is nothing to request from `sales@whop.com`.

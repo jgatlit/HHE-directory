@@ -140,7 +140,7 @@ export default async function WhopWebhooksPage() {
         <p className="text-center text-xs text-muted-foreground">
           See{' '}
           <code className="rounded bg-muted px-1 py-0.5">
-            docs/PHASE-2C-WHOP-DESIGN.md
+            docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md
           </code>{' '}
           § Webhook events for the full event catalog.
         </p>

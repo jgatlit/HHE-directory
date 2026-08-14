@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { getIdentityProfile, getPayoutStatus, isWhopPlatformsReady } from '@/lib/whop';
 
 export const runtime = 'nodejs';
@@ -73,58 +72,64 @@ export async function GET(request: NextRequest) {
 
     try {
       const update: Record<string, unknown> = {};
+      // Staged, not published. Nothing enters `drift` until the row is actually written —
+      // otherwise a failed update still reports `corrected: N` and logs "corrected drift" for
+      // changes that were rolled back.
+      const pending: Drift[] = [];
+      let observedStatus: string | null = null;
 
-      if (p.whopIdentityProfileId) {
-        const profile = await getIdentityProfile(p.whopIdentityProfileId);
-        if (profile) {
-          if (profile.payoutStatus && profile.payoutStatus !== p.whopPayoutStatus) {
-            drift.push({
-              slug: p.slug,
-              field: 'whopPayoutStatus',
-              was: p.whopPayoutStatus,
-              now: profile.payoutStatus,
-            });
-            update.whopPayoutStatus = profile.payoutStatus;
-          }
+      const profile = p.whopIdentityProfileId
+        ? await getIdentityProfile(p.whopIdentityProfileId)
+        : null;
 
-          // ONE-WAY ONLY: this sweep may OPEN the payout gate, never close it.
-          //
-          // A parent-company API key is known to under-report — `linked_companies` arrives
-          // populated on the webhook and reads back empty here for the same profile — so a
-          // `false` from this endpoint is "unconfirmed", not "revoked". Acting on it would let
-          // a read artifact silently delist a practitioner who can actually take payments.
-          // Revocation stays exclusively with identity_profile.rejected / needs_action.
-          if (
-            profile.payoutsEnabled === true &&
-            profile.status === 'approved' &&
-            !p.whopPayoutsEnabled
-          ) {
-            drift.push({ slug: p.slug, field: 'whopPayoutsEnabled', was: 'false', now: 'true' });
-            update.whopPayoutsEnabled = true;
-          }
+      if (profile) {
+        observedStatus = profile.payoutStatus ?? null;
+
+        // ONE-WAY ONLY: this sweep may OPEN the payout gate, never close it.
+        //
+        // Gate on `status`/`payout_status`, NOT on `payouts_enabled`. A parent-company API key
+        // under-reports the boolean: Whop's own identity_profile.updated for idpf_f9VEKuIiqGPc2
+        // carried `payouts_enabled: true` with `linked_companies` populated, and GET
+        // /identity_profiles returns `false` with `linked_companies: []` for that same profile
+        // today. The boolean is authoritative on the WEBHOOK and unreliable on READ, so gating
+        // the sweep on it means the sweep can never open the gate it exists to open.
+        //
+        // Revocation stays exclusively with identity_profile.rejected / needs_action — a `false`
+        // here is "unconfirmed", never "revoked", and acting on it would let a read artifact
+        // silently delist a practitioner who can actually take payments.
+        if (
+          profile.status === 'approved' &&
+          profile.payoutStatus === 'connected' &&
+          !p.whopPayoutsEnabled
+        ) {
+          pending.push({ slug: p.slug, field: 'whopPayoutsEnabled', was: 'false', now: 'true' });
+          update.whopPayoutsEnabled = true;
         }
       } else if (p.whopPayoutAccountId) {
-        // Fallback: no identity profile id yet, but we do have the payout account. This gives
-        // status only — never payouts_enabled — so it can correct the banner but not the gate.
+        // Reached when there is no identity-profile id OR the profile did not resolve (404 on a
+        // stale idpf_). A practitioner holding both ids must still fall through to here — an
+        // `else if` on the id alone would strand them with no fallback and no error.
         const { status } = await getPayoutStatus(p.whopPayoutAccountId);
-        if (status && status !== p.whopPayoutStatus) {
-          drift.push({
-            slug: p.slug,
-            field: 'whopPayoutStatus',
-            was: p.whopPayoutStatus,
-            now: status,
-          });
-          update.whopPayoutStatus = status;
-        }
+        observedStatus = status ?? null;
+      } else {
+        // Neither id resolved to anything. Report it rather than counting a silent no-op as a
+        // verified row.
+        errors.push(`${p.slug}: no Whop resource resolved (identity profile 404 or missing)`);
+      }
+
+      if (observedStatus && observedStatus !== p.whopPayoutStatus) {
+        pending.push({
+          slug: p.slug,
+          field: 'whopPayoutStatus',
+          was: p.whopPayoutStatus,
+          now: observedStatus,
+        });
+        update.whopPayoutStatus = observedStatus;
       }
 
       if (Object.keys(update).length > 0) {
         await prisma.practitioner.update({ where: { id: p.id }, data: update });
-        // Typesense is push-based, so a DB flip that changes listing eligibility is invisible
-        // to /search until it is explicitly reindexed.
-        await indexPractitioner(p.id).catch((e) =>
-          errors.push(`${p.slug}: reindex failed: ${e instanceof Error ? e.message : String(e)}`),
-        );
+        drift.push(...pending);
       }
     } catch (e) {
       errors.push(`${p.slug}: ${e instanceof Error ? e.message : String(e)}`);
@@ -141,11 +146,12 @@ export async function GET(request: NextRequest) {
     console.warn('whop-reconcile: corrected drift:', JSON.stringify(drift));
   }
 
-  return NextResponse.json({
-    checked: practitioners.length,
-    corrected: drift.length,
-    drift,
-    unpollable,
-    errors,
-  });
+  // 207 on any failure, matching /api/cron/trial-sweep. A sweep that polled twelve accounts,
+  // failed all twelve on a rotated key, and returned 200 is indistinguishable from a clean run
+  // to Vercel cron monitoring — the silent-success shape this route exists to eliminate.
+  const ok = errors.length === 0 && unpollable.length === 0;
+  return NextResponse.json(
+    { ok, checked: practitioners.length, corrected: drift.length, drift, unpollable, errors },
+    { status: ok ? 200 : 207 },
+  );
 }

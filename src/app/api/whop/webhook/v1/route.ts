@@ -60,15 +60,24 @@ async function resolvePractitioner(
     // /identity_profiles on 2026-08-13, for two separate approved profiles. The envelope names
     // exactly which connected company Whop is notifying about, and on thin payloads it is the
     // only company reference that exists at all.
+    // Try every candidate, not just the first one PRESENT. A `??` chain collapses to the first
+    // non-null value and issues a single lookup, so a fat payload carrying an unrelated
+    // `account_id` (the parent/platform company) would stop there, miss, and never reach the
+    // envelope — silently defeating the resolution this function exists to perform.
     const linkedCompanies = Array.isArray(data.linked_companies) ? data.linked_companies : undefined;
-    const companyId =
-      asString(asRecord(data.company)?.id) ??
-      asString(data.company_id) ??
-      asString(data.account_id) ??
-      asString(asRecord(data.payout_account)?.company_id) ??
-      asString(envelope?.company_id) ??
-      asString(asRecord(linkedCompanies?.[0])?.id);
-    if (companyId) {
+    const candidates = [
+      asString(asRecord(data.company)?.id),
+      asString(data.company_id),
+      asString(data.account_id),
+      asString(asRecord(data.payout_account)?.company_id),
+      asString(envelope?.company_id),
+      asString(asRecord(linkedCompanies?.[0])?.id),
+    ];
+
+    const seen = new Set<string>();
+    for (const companyId of candidates) {
+      if (!companyId || seen.has(companyId)) continue;
+      seen.add(companyId);
       const byCompany = await prisma.practitioner.findUnique({ where: { whopCompanyId: companyId } });
       if (byCompany) return byCompany;
     }
