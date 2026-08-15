@@ -6,6 +6,9 @@ import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { paymentsLive } from '@/lib/booking-flow';
+import { isListed } from '@/lib/practitioner-indexer';
+import { offeringTarget } from '@/lib/profile-ctas';
+import { OfferingCard } from '@/components/practitioners/OfferingCard';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { PractitionerHero } from '@/components/practitioners/PractitionerHero';
@@ -20,6 +23,9 @@ async function loadPractitioner(slug: string) {
       city: true,
       specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
+      // The PROFILE OWNER's role — isListed() exempts admins from the billing half of the gate,
+      // and it is the owner's role that matters, never the viewer's.
+      user: { select: { role: true } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
       // No `active` filter: that column is dead and was a trap — it reads like a hidden/visible
       // toggle and is not one, and because it filtered HERE it would have removed an Offering
@@ -30,21 +36,14 @@ async function loadPractitioner(slug: string) {
       // both already filter on it — dropping it here alone would let an archived Offering show
       // publicly while hidden from its own owner.
       //
-      // `listingVisibility` gates THIS GRID. The Booking Link chooser (§4, §17.4b) deliberately
-      // ignores it — that is what makes an unlisted free consult reachable there and nowhere
-      // else, and it is why one boolean could never express both layers.
-      whopProducts: {
-        where: { archived: false, listingVisibility: 'LISTED' },
-        orderBy: OFFERING_ORDER,
-      },
+      // NOT filtered on listingVisibility. The grid and the chooser need different subsets, and
+      // filtering here would strip LINK_ONLY offerings before the chooser could see them —
+      // destroying the one property that makes an unlisted free consult reachable (§4).
+      // Partitioned below: listingVisibility gates the grid, bookingLinkId gates the chooser.
+      whopProducts: { where: { archived: false }, orderBy: OFFERING_ORDER },
     },
   });
 }
-
-const formatPrice = (cents: number) => {
-  const d = cents / 100;
-  return `$${d % 1 === 0 ? d.toString() : d.toFixed(2)}`;
-};
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const p = await loadPractitioner(params.slug);
@@ -76,6 +75,42 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
   const rawModalities = Array.from(
     new Set(p.specialties.map((ps) => ps.rawLabel?.trim()).filter((l): l is string => !!l)),
   );
+
+  // Two layers, deliberately (§4, D3):
+  //   listingVisibility → what the public GRID shows
+  //   bookingLinkId     → what a Booking Link's CHOOSER offers, visibility ignored
+  // One boolean could never express both, which is why `active` was the wrong tool for this.
+  const ctaOfferings = p.whopProducts.map((o) => ({
+    id: o.id,
+    title: o.title,
+    priceUsdCents: o.priceUsdCents,
+    isConsult: o.isConsult,
+    bookingLinkId: o.bookingLinkId,
+    listingVisibility: o.listingVisibility,
+  }));
+  // Precomputed once per offering: paymentsLive was being evaluated twice with identical
+  // arguments and the CtaOffering literal rebuilt inline, so the mapping existed in two places
+  // that could drift.
+  const gridOfferings = p.whopProducts
+    .filter((o) => o.listingVisibility === 'LISTED')
+    .map((o) => {
+      const canTransact =
+        paymentsLive({
+          acceptsPayments: o.acceptsPayments,
+          practitionerPayoutsEnabled: p.whopPayoutsEnabled,
+          whopPlanId: o.whopPlanId,
+        }) && o.purchaseUrl != null;
+      // purchaseUrl is required, not incidental: the flow's checkout step reads it, so an
+      // offering with a plan id but no checkout URL would render a confident action that lands
+      // the buyer on "will be in touch" with no payment path. The old code deliberately left
+      // such an offering unbuttoned rather than broken-looking.
+      const actionable = o.bookingLinkId != null || canTransact;
+      return {
+        ...o,
+        canTransact,
+        href: actionable ? offeringTarget(p.slug, { ...o }) : null,
+      };
+    });
 
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-16">
@@ -124,9 +159,21 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 hheCertified={p.hheCertified}
               />
               <PractitionerCTAs
-                bookingLinks={p.bookingLinks.map((b) => ({ id: b.id, label: b.label, url: b.url }))}
+                slug={p.slug}
+                bookingLinks={p.bookingLinks.map((b) => ({
+                  id: b.id,
+                  label: b.label,
+                  url: b.url,
+                  ctaLabel: b.ctaLabel,
+                }))}
+                // EVERY non-archived offering, listingVisibility included: chooser membership is
+                // gated by bookingLinkId, never by visibility (§4).
+                offerings={ctaOfferings}
+                primaryBookingLinkId={p.primaryBookingLinkId}
+                // The SAME gate /book enforces. This page has no listing gate of its own, so
+                // without this a partially-onboarded practitioner's every CTA would 404.
+                isBookable={isListed(p)}
                 websiteUrl={p.websiteUrl}
-                firstSessionPriceCents={p.firstSessionPriceCents}
               />
             </aside>
 
@@ -183,7 +230,7 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 </section>
               )}
 
-              {p.whopProducts.length > 0 && (
+              {gridOfferings.length > 0 && (
                 <section
                   aria-label="Offerings"
                   className="space-y-3 rounded-xl bg-secondary/40 p-6"
@@ -192,57 +239,20 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                     Offerings
                   </h2>
                   <ul className="space-y-2.5">
-                    {p.whopProducts.map((o) => (
-                      <li
+                    {gridOfferings.map((o) => (
+                      <OfferingCard
                         key={o.id}
-                        className="flex items-start justify-between gap-4 rounded-lg border bg-card p-4"
-                      >
-                        <div className="min-w-0 space-y-1">
-                          <p className="text-sm font-medium">{o.title}</p>
-                          {o.description && (
-                            <p className="text-xs leading-relaxed text-muted-foreground">
-                              {o.description}
-                            </p>
-                          )}
-                          {o.category && (
-                            <span className="inline-block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                              {o.category}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-2">
-                          {o.priceUsdCents > 0 && (
-                            <p className="text-sm font-semibold">
-                              {formatPrice(o.priceUsdCents)}
-                              {o.interval === 'MONTHLY' && (
-                                <span className="text-xs font-normal text-muted-foreground">/mo</span>
-                              )}
-                            </p>
-                          )}
-                          {/* ONE definition of "can this transact", shared with the booking flow.
-                              This used to gate on purchaseUrl alone while the flow used §9's
-                              three-way rule, so the same offering could be buyable here and
-                              unpayable there — and `createOfferingCheckout` can return a
-                              purchaseUrl with a null planId, which made that reachable rather
-                              than theoretical. An offering without online payment stays
-                              unbuttoned rather than broken-looking, as before. */}
-                          {paymentsLive({
-                            acceptsPayments: o.acceptsPayments,
-                            practitionerPayoutsEnabled: p.whopPayoutsEnabled,
-                            whopPlanId: o.whopPlanId,
-                          }) &&
-                            o.purchaseUrl && (
-                            <a
-                              href={o.purchaseUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex h-8 items-center justify-center rounded-md bg-cta px-3 text-xs font-semibold text-cta-foreground transition-opacity hover:opacity-90"
-                            >
-                              {o.interval === 'ONE_TIME' ? 'Book' : 'Subscribe'}
-                            </a>
-                            )}
-                        </div>
-                      </li>
+                        title={o.title}
+                        description={o.description}
+                        priceUsdCents={o.priceUsdCents}
+                        interval={o.interval}
+                        category={o.category}
+                        duration={o.duration}
+                        // Straight into the flow — never a chooser (§4). Null only when there is
+                        // genuinely nothing to act on: no calendar and no live checkout.
+                        href={o.href}
+                        canTransact={o.canTransact}
+                      />
                     ))}
                   </ul>
                 </section>

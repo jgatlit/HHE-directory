@@ -35,13 +35,12 @@ const MUST_HAVE_A_CALLER = [
 /**
  * Public flow routes that must be REACHABLE FROM THE UI, not merely by typing a URL.
  *
- * `/practitioners/[slug]/book` currently fails this deliberately: §17.4a owns the profile CTA
- * hierarchy and has not landed, so the guard records the gap rather than asserting it away.
- * Flip `linked` to true in the PR that wires the CTA — that is the moment this becomes a real
- * assertion instead of a reminder, and it is exactly the step that got skipped for
- * startSubscriptionCheckout (correct, exported, callerless for two and a half months).
+ * §17.4a landed, so `/practitioners/[slug]/book` is now LINKED and this is a real assertion
+ * rather than a recorded gap. If a future change strips the profile CTAs, the flow silently
+ * becomes URL-only again — which is exactly how startSubscriptionCheckout stayed correct,
+ * exported and callerless for two and a half months.
  */
-const FLOW_ROUTES = [{ path: '/practitioners/', segment: 'book', linked: false, owner: '§17.4a' }];
+const FLOW_ROUTES = [{ path: '/practitioners/', segment: 'book', linked: true, owner: '§17.4a' }];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -84,9 +83,29 @@ describe('server-action reachability', () => {
 describe('flow routes are reachable from the UI', () => {
   for (const route of FLOW_ROUTES) {
     it(`${route.segment} flow — linked from a page: expected ${route.linked}`, () => {
-      const linked = files.some(
-        (f) => !f.includes(`${sep}book${sep}`) && /href=\{?[`'"][^`'"]*\/book\b/.test(readFileSync(f, 'utf8')),
+      // A URL-construction match alone is NOT enough. Broadened that far, the assertion was
+      // satisfied by src/lib/profile-ctas.ts — a pure helper rendered by nothing — so deleting
+      // the profile CTAs entirely left this green, which is precisely the regression it exists
+      // to catch. Require BOTH halves of the chain:
+      //   1. a COMPONENT (not a lib) constructs a /book target, and
+      //   2. the profile page actually renders that component.
+      const componentsLinking = files.filter(
+        (f) =>
+          !f.includes(`${sep}book${sep}`) &&
+          f.includes(`${sep}components${sep}`) &&
+          /\/book\?|chooserOptionTarget|bookingLinkTarget|offeringTarget/.test(
+            readFileSync(f, 'utf8'),
+          ),
       );
+      const profilePage = files.find(
+        (f) => f.endsWith(`${sep}practitioners${sep}[slug]${sep}page.tsx`),
+      );
+      const profileSrc = profilePage ? readFileSync(profilePage, 'utf8') : '';
+      const rendered = componentsLinking.some((f) => {
+        const name = f.split(sep).pop()!.replace(/\.tsx?$/, '');
+        return new RegExp(`<${name}\\b`).test(profileSrc);
+      });
+      const linked = componentsLinking.length > 0 && rendered;
       expect(
         linked,
         route.linked

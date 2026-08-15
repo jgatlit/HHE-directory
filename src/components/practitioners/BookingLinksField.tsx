@@ -76,12 +76,27 @@ export function BookingLinksField({ initial }: Props) {
   return (
     <div className="space-y-2" ref={root}>
       <SortableList items={rows} onReorder={setRows}>
-        {(row, _i, handle) => (
+        {(row, i, handle) => (
           <div className="flex items-start gap-2 pb-2">
             {handle}
             {/* Posted alongside the visible fields so the three getAll() arrays line up by index.
                 Always rendered, even when empty, or a new row would shift every later row's id. */}
             <input type="hidden" name="bookingId" value={row.dbId} />
+            {/* §14.3 — which link owns the hero slot. Keyed on ROW INDEX, not id, so a link the
+                practitioner just added can be made primary before it has one; the server maps
+                the index back to the real id after reconciling. Without a writer the hero
+                resolver read a column nothing ever set, and anyone with two links lost their
+                primary CTA to a placeholder. */}
+            <label className="mt-2.5 flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
+              <input
+                type="radio"
+                name="primaryBookingIndex"
+                value={i}
+                defaultChecked={i === 0}
+                aria-label={`Make booking link ${i + 1} the main button`}
+              />
+              Main
+            </label>
             <div className="grid flex-1 gap-2 sm:grid-cols-[minmax(0,11rem)_1fr]">
               <input
                 type="text"
