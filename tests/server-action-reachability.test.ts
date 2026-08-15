@@ -83,15 +83,29 @@ describe('server-action reachability', () => {
 describe('flow routes are reachable from the UI', () => {
   for (const route of FLOW_ROUTES) {
     it(`${route.segment} flow — linked from a page: expected ${route.linked}`, () => {
-      // Match URL CONSTRUCTION, not a literal href. The CTAs build their targets
-      // (`/practitioners/${slug}/book?${params}`), so an href-shaped regex found nothing and
-      // reported the flow unlinked while it was linked — the guard failing for the wrong reason
-      // is only marginally better than not having it.
-      const linked = files.some(
+      // A URL-construction match alone is NOT enough. Broadened that far, the assertion was
+      // satisfied by src/lib/profile-ctas.ts — a pure helper rendered by nothing — so deleting
+      // the profile CTAs entirely left this green, which is precisely the regression it exists
+      // to catch. Require BOTH halves of the chain:
+      //   1. a COMPONENT (not a lib) constructs a /book target, and
+      //   2. the profile page actually renders that component.
+      const componentsLinking = files.filter(
         (f) =>
           !f.includes(`${sep}book${sep}`) &&
-          /\/book\?|\/book['"`]/.test(readFileSync(f, 'utf8')),
+          f.includes(`${sep}components${sep}`) &&
+          /\/book\?|chooserOptionTarget|bookingLinkTarget|offeringTarget/.test(
+            readFileSync(f, 'utf8'),
+          ),
       );
+      const profilePage = files.find(
+        (f) => f.endsWith(`${sep}practitioners${sep}[slug]${sep}page.tsx`),
+      );
+      const profileSrc = profilePage ? readFileSync(profilePage, 'utf8') : '';
+      const rendered = componentsLinking.some((f) => {
+        const name = f.split(sep).pop()!.replace(/\.tsx?$/, '');
+        return new RegExp(`<${name}\\b`).test(profileSrc);
+      });
+      const linked = componentsLinking.length > 0 && rendered;
       expect(
         linked,
         route.linked

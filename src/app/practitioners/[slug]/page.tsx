@@ -6,6 +6,7 @@ import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { paymentsLive } from '@/lib/booking-flow';
+import { isListed } from '@/lib/practitioner-indexer';
 import { offeringTarget } from '@/lib/profile-ctas';
 import { OfferingCard } from '@/components/practitioners/OfferingCard';
 import { Card } from '@/components/ui/card';
@@ -22,6 +23,9 @@ async function loadPractitioner(slug: string) {
       city: true,
       specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
+      // The PROFILE OWNER's role — isListed() exempts admins from the billing half of the gate,
+      // and it is the owner's role that matters, never the viewer's.
+      user: { select: { role: true } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
       // No `active` filter: that column is dead and was a trap — it reads like a hidden/visible
       // toggle and is not one, and because it filtered HERE it would have removed an Offering
@@ -84,7 +88,29 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
     bookingLinkId: o.bookingLinkId,
     listingVisibility: o.listingVisibility,
   }));
-  const gridOfferings = p.whopProducts.filter((o) => o.listingVisibility === 'LISTED');
+  // Precomputed once per offering: paymentsLive was being evaluated twice with identical
+  // arguments and the CtaOffering literal rebuilt inline, so the mapping existed in two places
+  // that could drift.
+  const gridOfferings = p.whopProducts
+    .filter((o) => o.listingVisibility === 'LISTED')
+    .map((o) => {
+      const canTransact =
+        paymentsLive({
+          acceptsPayments: o.acceptsPayments,
+          practitionerPayoutsEnabled: p.whopPayoutsEnabled,
+          whopPlanId: o.whopPlanId,
+        }) && o.purchaseUrl != null;
+      // purchaseUrl is required, not incidental: the flow's checkout step reads it, so an
+      // offering with a plan id but no checkout URL would render a confident action that lands
+      // the buyer on "will be in touch" with no payment path. The old code deliberately left
+      // such an offering unbuttoned rather than broken-looking.
+      const actionable = o.bookingLinkId != null || canTransact;
+      return {
+        ...o,
+        canTransact,
+        href: actionable ? offeringTarget(p.slug, { ...o }) : null,
+      };
+    });
 
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-16">
@@ -144,6 +170,9 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 // gated by bookingLinkId, never by visibility (§4).
                 offerings={ctaOfferings}
                 primaryBookingLinkId={p.primaryBookingLinkId}
+                // The SAME gate /book enforces. This page has no listing gate of its own, so
+                // without this a partially-onboarded practitioner's every CTA would 404.
+                isBookable={isListed(p)}
                 websiteUrl={p.websiteUrl}
               />
             </aside>
@@ -221,28 +250,8 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                         duration={o.duration}
                         // Straight into the flow — never a chooser (§4). Null only when there is
                         // genuinely nothing to act on: no calendar and no live checkout.
-                        href={
-                          o.bookingLinkId ||
-                          paymentsLive({
-                            acceptsPayments: o.acceptsPayments,
-                            practitionerPayoutsEnabled: p.whopPayoutsEnabled,
-                            whopPlanId: o.whopPlanId,
-                          })
-                            ? offeringTarget(p.slug, {
-                                id: o.id,
-                                title: o.title,
-                                priceUsdCents: o.priceUsdCents,
-                                isConsult: o.isConsult,
-                                bookingLinkId: o.bookingLinkId,
-                                listingVisibility: o.listingVisibility,
-                              })
-                            : null
-                        }
-                        canTransact={paymentsLive({
-                          acceptsPayments: o.acceptsPayments,
-                          practitionerPayoutsEnabled: p.whopPayoutsEnabled,
-                          whopPlanId: o.whopPlanId,
-                        })}
+                        href={o.href}
+                        canTransact={o.canTransact}
                       />
                     ))}
                   </ul>

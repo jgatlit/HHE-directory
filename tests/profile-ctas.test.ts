@@ -6,6 +6,7 @@ import {
   linkDisplayLabel,
   bookingLinkTarget,
   offeringTarget,
+  chooserOptionTarget,
   type CtaOffering,
   type CtaBookingLink,
 } from '@/lib/profile-ctas';
@@ -158,5 +159,18 @@ describe('offeringTarget — a decided buyer is never re-presented a menu', () =
 
   it('encodes the slug rather than interpolating it raw', () => {
     expect(offeringTarget('a/b', off('x'))).toContain('/practitioners/a%2Fb/book');
+  });
+});
+
+describe('chooserOptionTarget — the two chooser paths share one construction', () => {
+  it('carries both link and offering', () => {
+    const href = chooserOptionTarget('sarah', 'L1', 'off1');
+    expect(href).toBe('/practitioners/sarah/book?link=L1&offering=off1');
+  });
+
+  it('encodes each component', () => {
+    expect(chooserOptionTarget('a/b', 'L 1', 'o&1')).toContain('/practitioners/a%2Fb/book');
+    expect(chooserOptionTarget('s', 'L 1', 'o&1')).toContain('link=L+1');
+    expect(chooserOptionTarget('s', 'L1', 'o&1')).toContain('offering=o%261');
   });
 });

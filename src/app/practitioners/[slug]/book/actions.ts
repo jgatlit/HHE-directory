@@ -22,8 +22,10 @@ import { SITE_URL } from '@/lib/site';
  * insert rows freely. An earlier version of this file claimed a dedupe window bounded that; it
  * did not, because varying the email defeats it entirely.
  *
- * 🚧 PROVISION KV BEFORE §17.4a LINKS THIS ROUTE FROM THE PROFILE. Today the flow is reachable
- * only by typing the URL, which is what keeps the exposure small.
+ * 🚧 KV IS STILL UNPROVISIONED **AND THIS ROUTE IS NOW PUBLICLY LINKED** from every profile
+ * (§17.4a). The obscurity that previously bounded the exposure is gone. The only bound in force
+ * is the per-practitioner email suppression below, which protects a practitioner's inbox and
+ * nothing else. See vault tsk_4ed1cffe7423469eba7c.
  */
 export async function startBookingIntent(slug: string, formData: FormData): Promise<void> {
   const raw = {
@@ -108,26 +110,32 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
   // never block — not now, and not after KV is provisioned either.
   if (!limited.success) bounce('TOO_MANY');
 
-  // A SECOND bound that works TODAY, because the one above does not: rate-limit.ts no-ops
-  // without KV and none is provisioned. This became load-bearing the moment §17.4a linked the
-  // flow from the profile and gave it real traffic.
+  // A per-practitioner burst bound that suppresses the EMAIL, never the capture.
   //
-  // Scoped per practitioner rather than per IP, because the harm being bounded is a practitioner's
-  // inbox: every capture emails them a lead. An IP bound alone is defeated by rotating IPs; this
-  // caps how much noise any single practitioner can be subjected to regardless of source.
-  // Generous enough that a genuine burst (a newsletter, a podcast mention) is not blocked.
-  const recent = await prisma.bookingIntent.count({
+  // An earlier version REJECTED the capture past this threshold, which was a denial-of-service on
+  // the victim rather than a defence: this endpoint is unauthenticated and the bound is keyed on
+  // the PRACTITIONER, so anyone could fire 15 requests at a slug and make that practitioner
+  // unbookable for ten minutes, renewably, at no cost. It also destroyed the lead — the one
+  // artefact §5 says capture exists to guarantee.
+  //
+  // Bounding the email instead keeps both properties: a practitioner's inbox cannot be flooded,
+  // and a genuine buyer arriving during a burst still has their details recorded and still
+  // reaches the scheduler. Throttling the SUBMITTER is the KV limiter's job; this one only ever
+  // protects the inbox.
+  const recentForPractitioner = await prisma.bookingIntent.count({
     where: {
       practitionerId: practitioner.id,
       createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
     },
   });
-  if (recent >= 15) {
-    console.warn('[booking-capture] per-practitioner burst bound hit', {
+  const emailSuppressed = recentForPractitioner >= 15;
+  if (emailSuppressed) {
+    // Visible, because the practitioner is not being told about leads they can still see in the
+    // dashboard, and a silent suppression is indistinguishable from a broken sender.
+    console.warn('[booking-capture] lead email suppressed by burst bound', {
       practitionerId: practitioner.id,
-      recent,
+      recentForPractitioner,
     });
-    bounce('TOO_MANY');
   }
 
   // §14.3 — with no explicit context, fall back to the practitioner's designated hero link rather
@@ -162,7 +170,7 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
   //
   // Out of band and never fatal: a failed send must not lose a lead that is already committed,
   // and the buyer must not see an error for something that is not their problem.
-  if (practitioner.notifyLeadsImmediately && practitioner.user.email) {
+  if (practitioner.notifyLeadsImmediately && practitioner.user.email && !emailSuppressed) {
     await sendLeadEmail({
       to: practitioner.user.email,
       practitionerName: practitioner.displayName,

@@ -1,8 +1,6 @@
-'use client';
-
-import { useState } from 'react';
 import Link from 'next/link';
 import { ChevronDown, Clock } from 'lucide-react';
+import { formatPrice, intervalSuffix, actionLabel } from '@/lib/money';
 
 type Props = {
   title: string;
@@ -11,23 +9,24 @@ type Props = {
   interval: 'ONE_TIME' | 'MONTHLY' | 'ANNUAL';
   category: string | null;
   duration: number | null;
-  /** Where "Book now" goes. Null when the offering cannot currently be acted on. */
+  /** Where the inner action goes. Null when there is genuinely nothing to act on. */
   href: string | null;
-  /** Payments are live for this offering (§9) — changes the inner action's wording only. */
+  /** §9 payments_live — changes the action wording only, never whether the card expands. */
   canTransact: boolean;
-};
-
-const formatPrice = (cents: number) => {
-  const d = cents / 100;
-  return Number.isInteger(d) ? `$${d}` : `$${d.toFixed(2)}`;
 };
 
 /**
  * Offering card — the UNDECIDED buyer's surface (§4).
  *
  * FIRST CLICK EXPANDS. It must never read as `Book`: that is a purchase action aimed at someone
- * still deciding, and this card's job is to do the selling. `Book now` appears INSIDE, after the
+ * still deciding, and this card's job is to do the selling. The action appears INSIDE, after the
  * description has had a chance to work.
+ *
+ * Native `<details>`, deliberately, rather than `useState`. A client component would have put the
+ * description and the CTA behind `open === false` on the server render — so the highest-intent
+ * copy on a public, SEO-driven directory would be absent from the HTML crawlers and no-JS clients
+ * receive, and the booking flow would be unreachable without JavaScript. `<details>` expands in
+ * place with the whole content present in the markup.
  */
 export function OfferingCard({
   title,
@@ -39,43 +38,34 @@ export function OfferingCard({
   href,
   canTransact,
 }: Props) {
-  const [open, setOpen] = useState(false);
+  const suffix = intervalSuffix(interval);
 
   return (
     <li className="rounded-lg border bg-card">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-3 p-3 text-left transition-colors hover:bg-accent/30"
-      >
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{title}</p>
-          <p className="flex items-center gap-2 text-xs text-muted-foreground">
-            {priceUsdCents > 0 ? (
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-3 p-3 transition-colors hover:bg-accent/30 [&::-webkit-details-marker]:hidden">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{title}</p>
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="font-semibold text-foreground">
-                {formatPrice(priceUsdCents)}
-                {interval === 'MONTHLY' && <span className="font-normal">/mo</span>}
+                {priceUsdCents > 0 ? formatPrice(priceUsdCents) : 'Free'}
+                {priceUsdCents > 0 && suffix && <span className="font-normal">{suffix}</span>}
               </span>
-            ) : (
-              <span className="font-semibold text-foreground">Free</span>
-            )}
-            {duration != null && duration > 0 && (
-              <span className="inline-flex items-center gap-1">
-                <Clock className="h-3 w-3" aria-hidden />
-                {duration} min
-              </span>
-            )}
-            {category && <span className="truncate">{category}</span>}
-          </p>
-        </div>
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
-          aria-hidden
-        />
-      </button>
+              {duration != null && duration > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="h-3 w-3" aria-hidden />
+                  {duration} min
+                </span>
+              )}
+              {category && <span className="truncate">{category}</span>}
+            </span>
+          </div>
+          <ChevronDown
+            className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+            aria-hidden
+          />
+        </summary>
 
-      {open && (
         <div className="space-y-3 border-t px-3 pb-3 pt-3">
           {description ? (
             <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
@@ -91,7 +81,7 @@ export function OfferingCard({
               href={href}
               className="inline-flex h-10 w-full items-center justify-center rounded-md bg-cta text-sm font-semibold text-cta-foreground transition-opacity hover:opacity-90"
             >
-              {canTransact && priceUsdCents > 0 ? 'Book now' : 'Request a time'}
+              {actionLabel({ interval, canTransact, priceUsdCents })}
             </Link>
           ) : (
             <p className="text-xs text-muted-foreground">
@@ -99,7 +89,7 @@ export function OfferingCard({
             </p>
           )}
         </div>
-      )}
+      </details>
     </li>
   );
 }

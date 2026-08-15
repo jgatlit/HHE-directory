@@ -165,6 +165,12 @@ model Practitioner {
   websiteUrl             String? // external site (classified out of overloaded col-D)
   telehealth             Boolean? // offers virtual sessions (~70% of pilot)
   inPerson               Boolean? // offers in-person sessions
+  /// ⚠️ NO LONGER RENDERED anywhere as of 2026-08-15. Its only surface was the booking rail's
+  /// hero sub-line, which §17.4a replaced with the link label + scheduler host. Offerings now
+  /// carry their own prices, which is the more precise signal. Left in place rather than dropped
+  /// because the landing copy's "Sessions from $29–$219+" claim was specced to be derived from
+  /// real data (docs/brand/CLAIMS-REVIEW-JONATHAN-AMY.md §1) and this is the column that would
+  /// feed it. Do NOT wire it back into the rail without re-reading §4's CTA hierarchy.
   firstSessionPriceCents Int? // first-session price in cents; render as $X.XX
   hheCertified           Boolean  @default(true) // HHE-certification trust badge (pilots are HHE grads)
 
@@ -501,6 +507,12 @@ model BookingIntent {
   /// §10's abandonment sweep scans by status + age; without this it degrades to a full scan as
   /// intents accumulate.
   @@index([status, createdAt])
+  /// The capture route's per-practitioner burst bound counts on (practitionerId, createdAt) and
+  /// runs on the critical path of EVERY submission on a publicly linked route. Neither index
+  /// above covers that pair — the first can only use its practitionerId prefix and must then
+  /// heap-fetch and filter every row the practitioner has ever received. Intents are never
+  /// deleted (§10 sweeps by status), so that cost grows monotonically forever.
+  @@index([practitionerId, createdAt])
 }
 
 // Wedge 2C — webhook event log (dedup + audit + retry surface)

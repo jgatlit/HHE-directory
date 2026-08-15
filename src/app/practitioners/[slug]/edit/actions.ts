@@ -307,6 +307,10 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     // §6 input tolerance: several providers' "share" dialogs give embed markup, not a link.
     .map((s) => extractUrlFromEmbed(String(s)));
   const bookingCtaLabels = formData.getAll('bookingCtaLabel').map((s) => String(s));
+  // §14.3 — which row owns the hero slot, as an INDEX into the posted rows (a new row has no id
+  // yet). Mapped to the real BookingLink id after the reconcile below.
+  const rawPrimaryIndex = String(formData.get('primaryBookingIndex') ?? '').trim();
+  const primaryIndex = rawPrimaryIndex ? Number.parseInt(rawPrimaryIndex, 10) : NaN;
   // Refuse rather than truncate. Silently keeping the first N would drop links the practitioner
   // can still see in their own form, which is the failure mode this whole workstream exists to
   // remove; and the row count directly multiplies how long the reconcile holds its transaction.
@@ -403,6 +407,9 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
     // Reconciling costs one extra hidden field and this block, and it is what makes the id a
     // durable identity rather than a per-save accident.
     const keptIds = bookingLinks.map((b) => b.id).filter((id): id is string => !!id);
+    // Index → persisted BookingLink id, so the posted primary index can be resolved after rows
+    // are created or updated in place.
+    const resolvedIds: (string | null)[] = [];
 
     // ⚠️ MUST precede the delete. `WhopProduct.bookingLinkId` is ON DELETE SET NULL, and the CHECK
     // `listingVisibility <> 'LINK_ONLY' OR bookingLinkId IS NOT NULL` is evaluated on the row the
@@ -434,7 +441,7 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
       // updateMany scoped by practitionerId IS the ownership check: a forged or stale id matches
       // nothing and updates zero rows, rather than retargeting another practitioner's link.
       const updated = b.id
-        ? await tx.bookingLink.updateMany({
+        ? ((resolvedIds[idx] = b.id), await tx.bookingLink.updateMany({
             where: { id: b.id, practitionerId: target.id },
             data: {
               label: b.label,
@@ -445,7 +452,7 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
               // corrected URL cannot leave a stale provider behind driving the wrong adapter.
               provider: detectProvider(b.url),
             },
-          })
+          }))
         : { count: 0 };
       // An id that resolved to nothing falls through to a create, so the practitioner's row is
       // still saved. Dropping it silently would lose a link they can see in the form.
@@ -470,7 +477,7 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
             JSON.stringify({ practitionerId: target.id, postedId: b.id }),
           );
         }
-        await tx.bookingLink.create({
+        const created = await tx.bookingLink.create({
           data: {
             practitionerId: target.id,
             label: b.label,
@@ -480,8 +487,19 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
             provider: detectProvider(b.url),
           },
         });
+        resolvedIds[idx] = created.id;
       }
     }
+
+    // Resolve the posted index to a real id and persist it. Cleared when the designated row was
+    // removed, which correctly returns the practitioner to §14.3's suppressed-hero state rather
+    // than silently promoting an arbitrary other calendar.
+    const designated =
+      Number.isInteger(primaryIndex) && primaryIndex >= 0 ? (resolvedIds[primaryIndex] ?? null) : null;
+    await tx.practitioner.update({
+      where: { id: target.id },
+      data: { primaryBookingLinkId: designated },
+    });
     },
     // Raised from Prisma's 5s default. This transaction is a chain of SEQUENTIAL round trips
     // whose length scales with the practitioner's own data — roughly five per specialty

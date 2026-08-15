@@ -115,3 +115,13 @@ export function offeringTarget(slug: string, offering: CtaOffering): string {
   if (offering.bookingLinkId) params.set('link', offering.bookingLinkId);
   return `/practitioners/${encodeURIComponent(slug)}/book?${params}`;
 }
+
+/**
+ * A chooser option's destination. Extracted because both chooser render paths were building this
+ * literal by hand — the only untested URL construction in the feature, and the two places most
+ * likely to drift from the helpers when a query param is added.
+ */
+export function chooserOptionTarget(slug: string, linkId: string, offeringId: string): string {
+  const params = new URLSearchParams({ link: linkId, offering: offeringId });
+  return `/practitioners/${encodeURIComponent(slug)}/book?${params}`;
+}
