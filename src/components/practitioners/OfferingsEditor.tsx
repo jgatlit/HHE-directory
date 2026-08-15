@@ -18,8 +18,9 @@ type Offering = {
   acceptsPayments: boolean;
   bookingLinkId: string | null;
   listingVisibility: 'LISTED' | 'LINK_ONLY';
-  /** D11 — the published flag is the PLAN id, not purchaseUrl: embedded checkout is addressed by
-   *  plan id and purchaseUrl is the hosted fallback only. */
+  /** Carried for §17.3c, which will address embedded checkout by plan id (D11). NOTE: the
+   *  published flag today is still `purchaseUrl` — PublishRow keys off it — so do not read this
+   *  as "the published flag" until that step actually switches over. */
   whopPlanId: string | null;
   purchaseUrl: string | null;
 };
@@ -37,8 +38,8 @@ type Action = (formData: FormData) => void | Promise<void>;
 export function OfferingsEditor({
   offerings,
   payoutsEnabled,
+  whopConnected,
   bookingLinks,
-  practitionerSlug,
   createAction,
   updateAction,
   deleteAction,
@@ -48,8 +49,9 @@ export function OfferingsEditor({
 }: {
   offerings: Offering[];
   payoutsEnabled: boolean;
+  /** Whop account exists. Gates whether "Accept payments" is EDITABLE (§9). */
+  whopConnected: boolean;
   bookingLinks: BookingLinkOption[];
-  practitionerSlug: string;
   createAction: Action;
   updateAction: Action;
   deleteAction: Action;
@@ -82,8 +84,8 @@ export function OfferingsEditor({
                   offering={o}
                   idPrefix={o.id}
                   bookingLinks={bookingLinks}
+                  whopConnected={whopConnected}
                   payoutsEnabled={payoutsEnabled}
-                  practitionerSlug={practitionerSlug}
                 />
                 <PublishRow
                   offering={o}
@@ -121,11 +123,17 @@ export function OfferingsEditor({
           Add an offering
         </p>
         <OfferingFields
+          // createOffering redirects to the SAME route, so React keeps this subtree mounted and
+          // the lazy useState initialisers never re-run — the add form would still show the last
+          // offering's free-consult / link / visibility choices, and one more click would create
+          // a duplicate carrying settings nobody picked for it. Re-keying on the saved set forces
+          // a fresh mount. Recorded in project memory as having bitten this repo twice.
+          key={`new-${offerings.map((o) => o.id).join(',')}`}
           offering={null}
           idPrefix="new"
           bookingLinks={bookingLinks}
+          whopConnected={whopConnected}
           payoutsEnabled={payoutsEnabled}
-          practitionerSlug={practitionerSlug}
         />
         <div className="flex justify-end">
           <button

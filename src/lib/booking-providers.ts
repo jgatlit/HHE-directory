@@ -28,9 +28,13 @@ function bareHost(host: string): string {
  * `acme.savvycal.com` and `bookings.acuityscheduling.com` are still their providers.
  */
 export function detectProvider(rawUrl: string): BookingProvider {
+  // Scheme-tolerant on purpose: the server normalizes `calendly.com/x` to `https://calendly.com/x`
+  // before storing, so a detector that threw on the bare form would make the admin badge disagree
+  // with the persisted provider — reporting "Other" for a link stored as CALENDLY.
+  const withProtocol = /^https?:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : `https://${rawUrl.trim()}`;
   let host: string;
   try {
-    host = bareHost(new URL(rawUrl.trim()).hostname);
+    host = bareHost(new URL(withProtocol).hostname);
   } catch {
     return 'OTHER';
   }
@@ -50,9 +54,53 @@ export function detectProvider(rawUrl: string): BookingProvider {
  */
 export function extractUrlFromEmbed(raw: string): string {
   const trimmed = raw.trim();
-  if (!trimmed.toLowerCase().includes('<iframe')) return trimmed;
-  const match = trimmed.match(/\ssrc\s*=\s*["']([^"']+)["']/i);
-  return match?.[1]?.trim() ?? trimmed;
+
+  // Scope to the IFRAME TAG, not the whole blob. Several providers ship a loader script before
+  // the frame — `<script src="…/widget.js"></script><iframe src="…">` — and matching the first
+  // ` src=` anywhere would return the JavaScript asset. That URL passes validation, saves
+  // cleanly, and turns every visitor's "Book" click into a file download.
+  const tag = trimmed.match(/<iframe\b[^>]*>/i)?.[0];
+  if (!tag) return trimmed;
+
+  const src = tag.match(/\ssrc\s*=\s*["']([^"']+)["']/i)?.[1]?.trim();
+  if (!src) return trimmed;
+
+  // Embed markup is HTML, so its query separators arrive entity-encoded. Storing `&amp;` verbatim
+  // turns `?owner=1&amp;appointmentType=2` into params `owner=1` and `amp;appointmentType=2` —
+  // the second is silently never sent, so every buyer lands on the practitioner's generic page
+  // instead of the specific service the link was built for, with nothing surfacing the loss.
+  return decodeHtmlEntities(src);
+}
+
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+/**
+ * Client-side mirror of the server's scheme-prepend, so the browser resolves a scheme-less entry
+ * the same way the server will store it.
+ *
+ * Without this the admin UI disagrees with what gets persisted: `calendly.com/sarah` renders a
+ * provider badge of "Other" (because `new URL()` throws) and a "Test link" href the browser
+ * resolves as a RELATIVE path — opening a 404 on our own domain for a link that saves and works
+ * perfectly. Both told the least technical cohort their working scheduler was broken.
+ */
+export function withScheme(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Human label for the provider badge in admin. */

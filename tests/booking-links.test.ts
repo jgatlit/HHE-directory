@@ -187,3 +187,50 @@ describe('duplicateBookingRowKeys — the advisory that replaced the dedupe', ()
     expect(dupes).toEqual(new Set(['a', 'b']));
   });
 });
+
+describe('parseBookingLinkRows — ctaLabels zip alignment', () => {
+  const normalize = (u: string) => u;
+
+  it('zips ctaLabels by the SAME index as ids/labels/urls', () => {
+    const out = parseBookingLinkRows(
+      {
+        ids: ['A', 'B'],
+        labels: ['first', 'second'],
+        urls: ['https://cal.com/a', 'https://cal.com/b'],
+        ctaLabels: ['Book a free consult', 'Book now'],
+      },
+      normalize,
+    );
+    expect(out).toEqual([
+      { id: 'A', label: 'first', url: 'https://cal.com/a', ctaLabel: 'Book a free consult' },
+      { id: 'B', label: 'second', url: 'https://cal.com/b', ctaLabel: 'Book now' },
+    ]);
+  });
+
+  // A skipped empty-URL row must not shift the ctaLabels, or one link's button text lands on a
+  // different link — silently, with the whole suite green. This is why the other arrays are
+  // already tested for exactly this.
+  it('keeps alignment when an emptied row is skipped', () => {
+    const out = parseBookingLinkRows(
+      {
+        ids: ['A', 'B', 'C'],
+        labels: ['first', 'gone', 'third'],
+        urls: ['https://cal.com/a', '', 'https://cal.com/c'],
+        ctaLabels: ['CTA-A', 'CTA-GONE', 'CTA-C'],
+      },
+      normalize,
+    );
+    expect(out!.map((r) => [r.id, r.ctaLabel])).toEqual([
+      ['A', 'CTA-A'],
+      ['C', 'CTA-C'],
+    ]);
+  });
+
+  it('treats a missing or blank ctaLabel as null (use the default)', () => {
+    const out = parseBookingLinkRows(
+      { ids: ['A'], labels: ['x'], urls: ['https://cal.com/a'], ctaLabels: ['   '] },
+      normalize,
+    );
+    expect(out![0]!.ctaLabel).toBeNull();
+  });
+});

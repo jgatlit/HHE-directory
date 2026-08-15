@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { CalendarClock, Link2 } from 'lucide-react';
 
-export type OfferingFieldValues = {
+export type OfferingFormValues = {
   title: string;
   description: string | null;
   priceUsdCents: number;
@@ -25,6 +25,7 @@ const CATEGORY_SUGGESTIONS = [
   'Package',
   'Program',
   'Product',
+  'Treatment',
   'Subscription',
 ];
 
@@ -53,15 +54,21 @@ export function OfferingFields({
   offering,
   idPrefix,
   bookingLinks,
+  whopConnected,
   payoutsEnabled,
-  practitionerSlug,
 }: {
-  offering: OfferingFieldValues | null;
+  offering: OfferingFormValues | null;
   idPrefix: string;
   bookingLinks: BookingLinkOption[];
-  /** Whop connected AND payouts live. Gates "Accept Payments" per §9. */
+  /**
+   * §9 — the checkbox is gated on being CONNECTED, not on payouts being live. While Whop is still
+   * verifying, the practitioner may tick it and capability flips on by itself. That is the whole
+   * "onboarding gap solved as a side effect": build the listing early, tick the boxes, and every
+   * ticked Offering goes live automatically on verification with no re-editing.
+   */
+  whopConnected: boolean;
+  /** Payouts actually live. Affects the EXPLANATION, never whether the box can be ticked. */
   payoutsEnabled: boolean;
-  practitionerSlug: string;
 }) {
   const [isConsult, setIsConsult] = useState(offering?.isConsult ?? false);
   const [acceptsPayments, setAcceptsPayments] = useState(offering?.acceptsPayments ?? false);
@@ -71,9 +78,13 @@ export function OfferingFields({
   );
 
   // D2 — a free consultation is an Offering with price 0 and no Whop plan. Payment is not
-  // "unavailable" for it, it is meaningless.
-  const paymentsDisabled = isConsult || !payoutsEnabled;
-  const effectiveAcceptsPayments = acceptsPayments && !paymentsDisabled;
+  // "unavailable" for it, it is meaningless. That is the ONLY case that forces the value false;
+  // "not connected yet" merely prevents EDITING it.
+  const paymentsLocked = isConsult || !whopConnected;
+  // Show the STORED bit. Masking it with capability made the row lie about its own state, and —
+  // because the disabled mirror was then fed the masked value — every save silently rewrote a
+  // stored `true` to false. The bit is intent; only isConsult may overwrite intent.
+  const shownAcceptsPayments = isConsult ? false : acceptsPayments;
 
   // LINK_ONLY REQUIRES a booking link (§2 constraint, backed by a DB CHECK). Enforced here by
   // construction: with no link chosen the Offering must stay LISTED, so the control is disabled
@@ -189,33 +200,42 @@ export function OfferingFields({
           <input
             type="checkbox"
             name="acceptsPayments"
-            checked={effectiveAcceptsPayments}
-            disabled={paymentsDisabled}
+            checked={shownAcceptsPayments}
+            disabled={paymentsLocked}
             onChange={(e) => setAcceptsPayments(e.target.checked)}
             className="mt-0.5 disabled:opacity-50"
           />
-          <span className={paymentsDisabled ? 'opacity-60' : undefined}>
+          <span className={paymentsLocked ? 'opacity-60' : undefined}>
             <span className="font-medium">Accept payments</span>
             <span className="block text-muted-foreground">
               To accept payments here for bookings and purchases through your profile.
-              {!payoutsEnabled && !isConsult && (
+              {!isConsult && !whopConnected && (
                 <>
                   {' '}
                   {/* A greyed checkbox with no path out is a dead end for the least technical
                       cohort — the tooltip must LINK to the connection flow, not merely explain
-                      the disablement (§12). */}
+                      the disablement (§12). A BARE FRAGMENT, not an absolute path: this page IS
+                      that URL, so a full href hard-navigates and discards every unsaved edit. */}
                   <a
-                    href={`/practitioners/${practitionerSlug}/edit#payments`}
+                    href="#payments"
                     className="font-medium underline underline-offset-2 hover:text-foreground"
                   >
                     Set up payments first →
                   </a>
                 </>
               )}
+              {!isConsult && whopConnected && !payoutsEnabled && (
+                <>
+                  {' '}
+                  <span className="font-medium text-foreground">
+                    Whop is still verifying you — tick this now and it switches on by itself.
+                  </span>
+                </>
+              )}
             </span>
           </span>
         </label>
-        {paymentsDisabled && <DisabledMirror name="acceptsPayments" checked={effectiveAcceptsPayments} />}
+        {paymentsLocked && <DisabledMirror name="acceptsPayments" checked={shownAcceptsPayments} />}
 
         <div className="space-y-1 pt-1">
           <label className="flex items-center gap-2 text-xs font-medium" htmlFor={`bl-${idPrefix}`}>
@@ -249,10 +269,14 @@ export function OfferingFields({
           />
           <span className={visibilityLocked ? 'opacity-60' : undefined}>
             <span className="font-medium">Show on profile</span>
-            {/* LOAD-BEARING SENTENCE. Without it "hidden" reads as "switched off", and
-                practitioners will believe their free consult is disabled (§12). */}
+            {/* §12's sentence is "Hidden offerings are still available to anyone who clicks the
+                linked booking link." That is LOAD-BEARING — without it "hidden" reads as
+                "switched off" — but it is not TRUE until the Booking Link chooser ships (§17.4b),
+                so stating it now would tell the practitioner their offering is reachable
+                somewhere it is not. Restore the spec wording verbatim with the chooser. */}
             <span className="block text-muted-foreground">
-              Hidden offerings are still available to anyone who clicks the linked booking link.
+              Hidden offerings stay off your public profile. They become reachable through the
+              linked booking link when the booking flow ships.
               {visibilityLocked && ' Choose a booking link above to be able to hide this.'}
             </span>
           </span>

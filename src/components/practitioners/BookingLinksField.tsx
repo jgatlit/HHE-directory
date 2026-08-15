@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { Plus, X, ExternalLink } from 'lucide-react';
 import { SortableList } from '@/components/practitioners/SortableList';
 import { duplicateBookingRowKeys } from '@/lib/booking-links';
-import { detectProvider, extractUrlFromEmbed, PROVIDER_LABEL } from '@/lib/booking-providers';
+import { detectProvider, extractUrlFromEmbed, withScheme, PROVIDER_LABEL } from '@/lib/booking-providers';
 
 export type BookingLinkInput = { id: string; label: string; url: string; ctaLabel: string };
 /**
@@ -111,6 +111,8 @@ export function BookingLinksField({ initial }: Props) {
                     working outcome (the null adapter), not an error, so it is stated plainly. */}
                 <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                   {row.url.trim() ? PROVIDER_LABEL[detectProvider(row.url)] : 'No link yet'}
+                  {/* detectProvider is scheme-tolerant, so `calendly.com/x` reports CALENDLY —
+                      matching what the server persists rather than "Other". */}
                 </span>
                 <input
                   type="text"
@@ -126,12 +128,15 @@ export function BookingLinksField({ initial }: Props) {
                     practitioner is the only party who can confirm the calendar is theirs
                     and live. */}
                 <a
-                  href={row.url.trim() || undefined}
+                  // withScheme mirrors the server's normalisation. Using the raw value made
+                  // `as.me/sarah` resolve as a RELATIVE path — opening a 404 on our own domain
+                  // and telling the practitioner their working scheduler was broken.
+                  href={withScheme(row.url) ?? undefined}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-disabled={!row.url.trim()}
+                  aria-disabled={!withScheme(row.url)}
                   className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors ${
-                    row.url.trim()
+                    withScheme(row.url)
                       ? 'hover:bg-accent/40'
                       : 'pointer-events-none opacity-40'
                   }`}
