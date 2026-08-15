@@ -158,7 +158,7 @@ describe('who gets mailed', () => {
     expect(body.skipReasons['payments-not-live']).toBe(1);
   });
 
-  it('queries unpaid, never-yet-mailed, old-enough intents behind the listing gate', async () => {
+  it('queries unpaid, never-yet-mailed, old-enough intents', async () => {
     await GET(req());
     const where = (mocks.findMany.mock.calls[0]![0] as { where: Record<string, unknown> }).where;
     expect(where.paidAt).toBeNull();
@@ -168,8 +168,10 @@ describe('who gets mailed', () => {
     // dropping it here silently widens who is considered.
     const createdAt = where.createdAt as { lte: Date };
     expect(createdAt.lte.getTime()).toBeLessThanOrEqual(Date.now() - 15 * 60 * 1000);
-    // A delisted practitioner's flow page 404s, so a resume link would mail a dead end.
-    expect(where.practitioner).toBeTruthy();
+    // bookableWhere(), NOT listedWhere(): an unlisted practitioner's resume link resolves, so
+    // that buyer is recoverable like any other — but a RETIRED row is still refused, because
+    // mailing a resume link for one points the buyer at a profile nobody is reading.
+    expect(JSON.stringify(where.practitioner)).toContain('trialEndsAt');
     // BOTH routes into state (b): scheduled, and the no-scheduler cohort that reached checkout.
     expect(JSON.stringify(where.OR)).toContain('SCHEDULED');
     expect(JSON.stringify(where.OR)).toContain('whopCheckoutSessionId');

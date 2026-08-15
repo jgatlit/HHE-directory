@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
-import { listedWhere } from '@/lib/practitioner-indexer';
+import { bookableWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
 import { CAPTURE_LIMITS, CAPTURE_ERRORS, type CaptureErrorCode } from '@/lib/booking-intent';
 import { startBookingIntent } from './actions';
@@ -21,7 +21,7 @@ type Props = {
   };
 };
 
-// Reads searchParams and the live listing gate; there is nothing cacheable here.
+// Reads searchParams; there is nothing cacheable here.
 export const dynamic = 'force-dynamic';
 
 export const metadata = { robots: { index: false, follow: false } };
@@ -29,13 +29,15 @@ export const metadata = { robots: { index: false, follow: false } };
 /**
  * Step 1 of the booking flow (§5) — the only UNCONDITIONAL step.
  *
- * Public and unauthenticated: the buyer is not a user. The practitioner must be publicly LISTED,
- * enforced with the same `listedWhere()` gate as the profile and the search index so a delisted
- * practitioner cannot keep taking leads through a bookmarked URL.
+ * Public and unauthenticated: the buyer is not a user. Gated by `bookableWhere()`, NOT
+ * `listedWhere()` — see that function for the distinction. "Unlisted" means absent from directory
+ * search, not switched off, and trial-sweep's own email promises the profile "stays live at its
+ * direct link". What IS still refused is a RETIRED row: an operator artefact whose owner mailbox
+ * is typically dead, so a lead captured there is silently lost while the buyer is told otherwise.
  */
 export default async function BookCapturePage({ params, searchParams }: Props) {
   const practitioner = await prisma.practitioner.findFirst({
-    where: { slug: params.slug, ...listedWhere() },
+    where: { slug: params.slug, ...bookableWhere() },
     select: { id: true, slug: true, displayName: true },
   });
   if (!practitioner) notFound();

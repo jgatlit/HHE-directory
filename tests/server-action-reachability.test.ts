@@ -179,3 +179,44 @@ describe('the public booking URL is addressed by a random token, never the cuid 
     expect(offenders.map((o) => `${o.f}:${o.i}`)).toEqual([]);
   });
 });
+
+/**
+ * Who may be BOOKED is a different question from who may be DISCOVERED, and the booking surfaces
+ * must all answer it the same way.
+ *
+ * Asserted structurally because the unit tests cannot reach two of the four surfaces: the capture
+ * page and the flow page are server components with no test harness, so re-adding `listedWhere()`
+ * to either — or dropping `bookableWhere()` from either — passes the entire suite while breaking
+ * the behaviour this exists to guarantee (an unlisted practitioner is bookable; a retired one is
+ * not). That is the same defect class as the callerless server action above.
+ */
+describe('every booking surface gates on bookableWhere, never listedWhere', () => {
+  const SURFACES = [
+    'app/practitioners/[slug]/book/page.tsx',
+    'app/practitioners/[slug]/book/actions.ts',
+    'app/practitioners/[slug]/book/[token]/page.tsx',
+    'app/practitioners/[slug]/book/[token]/actions.ts',
+    'app/api/cron/booking-sweep/route.ts',
+  ];
+
+  it.each(SURFACES)('%s calls bookableWhere()', (rel) => {
+    const src = readFileSync(join(ROOT, rel), 'utf8');
+    expect(src).toContain('bookableWhere()');
+  });
+
+  it.each(SURFACES)('%s does NOT re-introduce listedWhere()', (rel) => {
+    // Comments legitimately name it to explain the distinction, so they are stripped first: a
+    // CALL is the regression, a mention is documentation.
+    const code = readFileSync(join(ROOT, rel), 'utf8')
+      .split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join('\n');
+    expect(code).not.toContain('listedWhere()');
+  });
+
+  it('keeps listedWhere on the DISCOVERY surfaces, which is what it is for', () => {
+    for (const rel of ['lib/directory.ts']) {
+      expect(readFileSync(join(ROOT, rel), 'utf8')).toContain('listedWhere()');
+    }
+  });
+});

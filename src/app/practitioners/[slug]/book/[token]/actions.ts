@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
-import { listedWhere } from '@/lib/practitioner-indexer';
+import { bookableWhere } from '@/lib/practitioner-indexer';
 import { isClientScheduleSignal } from '@/lib/booking-flow';
 import { rateLimit } from '@/lib/rate-limit';
 import { headers } from 'next/headers';
@@ -11,8 +11,8 @@ import { headers } from 'next/headers';
  * Record that the buyer moved past step 2 (§8).
  *
  * PUBLIC AND UNAUTHENTICATED, like the rest of the flow — the buyer is not a user. The token in
- * the URL is the credential, so it is resolved scoped to the slug AND through the listing gate,
- * exactly as the page is.
+ * the URL is the credential, so it is resolved scoped to the slug, exactly as the page is. NOT
+ * through the listing gate — unlisted means "not in directory search", not "cannot be booked".
  *
  * ⚠️ THIS IS NOT A GUARD. D8: no external signal is a state-transition guard, and the buyer
  * advances the flow. This records what we OBSERVED — `SELF_REPORT` when they said so, `ASSUMED`
@@ -39,7 +39,7 @@ export async function recordScheduleSignal(
   const limited = await rateLimit('booking-signal', ip, { limit: 60, windowSeconds: 600 });
   if (!limited.success) return { ok: false };
 
-  // Scoped by slug + listing gate, and only ever advances a PENDING intent. A SCHEDULED intent
+  // Scoped by slug + bookableWhere(), and only ever advances a PENDING intent. A SCHEDULED intent
   // re-submitting is a no-op rather than an error — the buyer may legitimately click twice, and
   // a PAID intent must never be dragged backwards by a stale tab.
   const updated = await prisma.bookingIntent.updateMany({
@@ -50,7 +50,7 @@ export async function recordScheduleSignal(
       // success while the intent stayed ABANDONED forever and was eligible to be swept again.
       // PAID is still excluded, which is the guarantee the filter existed for.
       status: { in: ['PENDING', 'ABANDONED'] },
-      practitioner: { slug, ...listedWhere() },
+      practitioner: { slug, ...bookableWhere() },
     },
     data: {
       status: 'SCHEDULED',

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { bookableWhere } from '@/lib/practitioner-indexer';
 import { sendEmail } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
-import { listedWhere } from '@/lib/practitioner-indexer';
 import { paymentsLive } from '@/lib/booking-flow';
 import {
   COLD_LEAD_MS,
@@ -90,14 +90,17 @@ export async function GET(request: Request): Promise<NextResponse> {
     // minted checkout session (§5's 1 → 3 subscription cohort, whose status never advances
     // because they never pass a scheduler).
     //
-    // The listing gate is applied HERE rather than in code because it is not a §10 rule: a
-    // delisted practitioner's flow page 404s, so a resume link would mail the buyer a dead end.
+    // NO listing gate. It used to be applied here on the reasoning that "a delisted
+    // practitioner's flow page 404s, so a resume link would mail the buyer a dead end" — true at
+    // the time, and a symptom of the gate on the flow rather than a reason for one here. Unlisted
+    // profiles stay bookable at their direct link, so the resume link resolves and the buyer is
+    // recoverable exactly as any other.
     const candidates = await prisma.bookingIntent.findMany({
       where: {
         paidAt: null,
         resumeEmailSentAt: null,
         createdAt: { lte: new Date(now.getTime() - RESUME_AFTER_CAPTURE_MS) },
-        practitioner: listedWhere(),
+        practitioner: bookableWhere(),
         OR: [{ status: 'SCHEDULED' }, { status: 'PENDING', whopCheckoutSessionId: { not: null } }],
       },
       select: {
@@ -128,10 +131,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     });
 
     resume.matched = candidates.length;
-    // A silent cap reads as "covered everything" when it did not. Because every send now sets
-    // `resumeEmailSentAt`, the taken rows genuinely leave the candidate set and the remainder IS
-    // reached on later runs — which was not true before the marker existed, when the same oldest
-    // N were re-selected forever and row N+1 was never reached at all.
+    // A silent cap reads as "covered everything" when it did not. Every row taken here leaves the
+    // candidate set — sent ones and permanently-refused ones alike both stamp `resumeEmailSentAt`
+    // — so the remainder IS reached on later runs. That is only true because refusals are
+    // recorded too: recording sends alone would still let permanently-unsendable rows pile up at
+    // the head of the ordering and starve everything behind them.
     if (candidates.length === CANDIDATE_TAKE) {
       console.warn(
         `[booking-sweep] candidate cap hit (${CANDIDATE_TAKE}); the remainder is picked up by subsequent runs as these are marked sent`,
@@ -156,6 +160,22 @@ export async function GET(request: Request): Promise<NextResponse> {
       if (!decision.send) {
         resume.skipped += 1;
         skipReasons[decision.reason] = (skipReasons[decision.reason] ?? 0) + 1;
+        // A PERMANENT refusal is recorded so the row stops matching. Skipping without recording
+        // left it in the candidate set forever, and with `orderBy createdAt asc` + a take cap,
+        // enough of those at the head of the ordering starve every mailable newer intent — the
+        // cap silently stops being a batch size and becomes a ceiling. The column means "no
+        // resume email is owed", which covers both sent and never-sendable.
+        if (decision.permanent) {
+          await prisma.bookingIntent
+            .update({ where: { id: intent.id }, data: { resumeEmailSentAt: new Date() } })
+            .catch((err) => {
+              console.error('[booking-sweep] could not record permanent skip', {
+                intentId: intent.id,
+                reason: decision.reason,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
+        }
         continue;
       }
 
@@ -211,7 +231,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       where: {
         status: 'SCHEDULED',
         scheduledNoticeSentAt: null,
-        practitioner: listedWhere(),
+        practitioner: bookableWhere(),
       },
       select: {
         id: true,

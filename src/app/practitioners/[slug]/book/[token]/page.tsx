@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Check } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
-import { listedWhere } from '@/lib/practitioner-indexer';
+import { bookableWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
 import { flowShape, paymentsLive } from '@/lib/booking-flow';
 import { SchedulerStep } from '@/components/booking/SchedulerStep';
@@ -29,12 +29,20 @@ export const metadata = { robots: { index: false, follow: false } };
  * good enough for that job.
  */
 export default async function BookingFlowPage({ params }: Props) {
-  // Scoped by slug AND through the listing gate, matching the capture page and action: the token
-  // alone is a bearer credential, and without the gate a bookmarked URL would keep serving a
-  // delisted or trial-expired practitioner's calendar indefinitely. IDOR discipline — a mismatch,
-  // a missing row and an unlisted practitioner all produce one identical 404.
+  // Scoped by slug and by `bookableWhere()` — deliberately NOT by the listing gate.
+  //
+  // "Unlisted" means absent from directory search — it does not mean the profile is switched off.
+  // trial-sweep's own warning email promises exactly this: "your profile stays live at its direct
+  // link, but stops appearing in directory search once the trial ends." Gating the flow on
+  // listedWhere() broke that promise: the profile rendered with Book buttons that 404'd, so a
+  // practitioner sending her own link to a client watched them dead-end, and neither side was
+  // told why. It also silently applied a COMPLETENESS test (bio, city, specialty) to booking,
+  // which has nothing to do with whether someone may book.
+  //
+  // IDOR discipline is unchanged: the slug scoping stays, so a token that does not belong to this
+  // practitioner still produces one identical 404.
   const intent = await prisma.bookingIntent.findFirst({
-    where: { publicToken: params.token, practitioner: { slug: params.slug, ...listedWhere() } },
+    where: { publicToken: params.token, practitioner: { slug: params.slug, ...bookableWhere() } },
     select: {
       id: true,
       publicToken: true,

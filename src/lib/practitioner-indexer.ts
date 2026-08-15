@@ -133,6 +133,50 @@ export function listedWhere(): Prisma.PractitionerWhereInput {
   };
 }
 
+/**
+ * The RETIREMENT sentinel: `trialEndsAt` backdated to the epoch.
+ *
+ * Not a great marker, and named here so it is at least a marker rather than a magic date buried
+ * in two scripts. `scripts/retire-duplicate-sarah-row.ts` and `scripts/retire-operator-test-listing.ts`
+ * retire a row by backdating its trial clock, because that was the only lever that existed. The
+ * invitation table uses the same convention (`expiresAt` epoch 0 = revoked).
+ *
+ * ⚠️ A dedicated `retiredAt` column would be the honest fix. Until then, anything that must
+ * distinguish "retired" from "merely unlisted" has to key on this, and it must do so THROUGH
+ * `bookableWhere()` rather than re-deriving the comparison.
+ */
+const RETIREMENT_SENTINEL = new Date('1971-01-01T00:00:00.000Z');
+
+/**
+ * Who may be BOOKED — as distinct from who may be DISCOVERED.
+ *
+ * `listedWhere()` conflates two unrelated predicates: profile COMPLETENESS (displayName, city,
+ * bio, specialties) and BILLING standing. That is right for the directory, which is a promotional
+ * surface, and wrong for the booking flow, which was rejecting people for both reasons:
+ *
+ *   - A practitioner mid-onboarding with no bio could not take a lead through her own link.
+ *   - A practitioner past her trial had a live profile whose Book buttons 404'd — contradicting
+ *     trial-sweep's own warning email, which promises the profile "stays live at its direct link,
+ *     but stops appearing in directory search".
+ *
+ * So booking gates on ONE thing: the row has not been retired. A retired row is an operator
+ * artefact — a duplicate created by a corrected email, or a test listing — and is typically owned
+ * by a mailbox nobody reads. `sarah-schindler` is exactly that: retired 2026-08-12, owner
+ * `hello@livingaligned.love`, which Sarah confirmed on the 2026-08-11 call is dead. Capturing a
+ * lead there sends it to no one while telling the buyer their details were received.
+ *
+ * ⚠️ NOTE WHAT THIS DELIBERATELY DOES NOT DO. It does not test billing standing, so a practitioner
+ * whose trial lapsed keeps a working checkout. That follows from the operator's rule that unlisted
+ * profiles stay bookable, and today no row is in that state (every live trialEndsAt is null). It
+ * becomes a live policy question the moment `scripts/backfill-trial-dates.ts` starts the pilot
+ * clocks — flagged rather than decided here.
+ */
+export function bookableWhere(): Prisma.PractitionerWhereInput {
+  return {
+    OR: [{ trialEndsAt: null }, { trialEndsAt: { gt: RETIREMENT_SENTINEL } }],
+  };
+}
+
 export function toTypesenseDoc(p: PractitionerForIndex): PractitionerDoc {
   const specialtyNames = new Set<string>();
   const specialtySlugs = new Set<string>();

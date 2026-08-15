@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 
 /**
- * The action carries every non-obvious rule in §17.3b — slug scoping, the listing gate, which
- * statuses may advance, and that EVENT is not client-reportable. Asserting `flowShape` returns
+ * The action carries every non-obvious rule in §17.3b — slug scoping, which practitioners are
+ * bookable, which statuses may advance, and that EVENT is not client-reportable. Asserting `flowShape` returns
  * its input is not coverage of any of that, and two real defects passed a green suite because of
  * it. These assert on the `where` clause, the same way trial-sweep and whop-webhook-v1 do.
  */
@@ -56,7 +56,7 @@ describe('recordScheduleSignal — what may be written', () => {
 });
 
 describe('recordScheduleSignal — scoping', () => {
-  it('scopes by slug AND the listing gate, so one practitioner cannot advance another\'s intent', async () => {
+  it('scopes by slug, so one practitioner cannot advance another\'s intent', async () => {
     await recordScheduleSignal('sarah', 'tok_1', 'SELF_REPORT');
     const where = mocks.updateMany.mock.calls[0]![0].where as Record<string, unknown>;
     // Addressed by the RANDOM publicToken, never the cuid primary key: this action is public and
@@ -65,9 +65,33 @@ describe('recordScheduleSignal — scoping', () => {
     expect(where.id).toBeUndefined();
     const practitioner = where.practitioner as Record<string, unknown>;
     expect(practitioner.slug).toBe('sarah');
-    // listedWhere() contributes the completeness + billing gate; its presence is what stops a
-    // bookmarked URL advancing a delisted or trial-expired practitioner's intent.
-    expect(Object.keys(practitioner).length).toBeGreaterThan(1);
+  });
+
+  // "Unlisted" means absent from directory SEARCH — it never meant the profile is switched off.
+  // trial-sweep's warning email promises exactly this: the profile "stays live at its direct
+  // link". Gating on listedWhere() broke that promise and, incidentally, applied a COMPLETENESS
+  // test (bio, city, specialty) to whether someone may be booked.
+  //
+  // Asserted as the ABSENCE of the completeness keys rather than an exact key list: pinning the
+  // clause to exactly ['slug'] would make any future legitimate scoping guard fail as though the
+  // listing gate had returned, pushing the next reader to delete a real condition to get green.
+  it('does NOT apply the completeness half of the listing gate', async () => {
+    await recordScheduleSignal('sarah', 'tok_1', 'SELF_REPORT');
+    const where = mocks.updateMany.mock.calls[0]![0].where as Record<string, unknown>;
+    const practitioner = where.practitioner as Record<string, unknown>;
+    expect(practitioner.displayName).toBeUndefined();
+    expect(practitioner.cityId).toBeUndefined();
+    expect(practitioner.bio).toBeUndefined();
+    expect(practitioner.specialties).toBeUndefined();
+  });
+
+  // But a RETIRED row must still be refused — its owner mailbox is typically dead, so a lead
+  // captured there is acknowledged to the buyer and read by nobody.
+  it('still refuses a retired practitioner via bookableWhere()', async () => {
+    await recordScheduleSignal('sarah', 'tok_1', 'SELF_REPORT');
+    const where = mocks.updateMany.mock.calls[0]![0].where as Record<string, unknown>;
+    const practitioner = where.practitioner as Record<string, unknown>;
+    expect(JSON.stringify(practitioner)).toContain('trialEndsAt');
   });
 
   it('advances PENDING and ABANDONED, never PAID', async () => {
