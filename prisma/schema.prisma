@@ -558,6 +558,12 @@ model BookingIntent {
   resumeEmailSentAt     DateTime?
   /// Same contract for the practitioner's "someone booked a time" notice.
   scheduledNoticeSentAt DateTime?
+  /// Same contract again, for the payment confirmation sent to BOTH sides once `paidAt` is set.
+  ///
+  /// Payment notices are sent from the sweep rather than the webhook on purpose: Whop retries a
+  /// webhook 3x over ~70s and then drops it permanently, so the handler must acknowledge fast and
+  /// never block on an email. src/lib/email.ts says this in as many words.
+  paidNoticeSentAt      DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

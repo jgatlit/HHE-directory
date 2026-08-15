@@ -2,6 +2,7 @@ import { CalendarClock, CircleAlert, Mail, Phone } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { formatPrice } from '@/lib/money';
+import { groupBookings } from '@/lib/booking-groups';
 
 export type BookingRow = {
   id: string;
@@ -13,6 +14,8 @@ export type BookingRow = {
   scheduleSignal: 'EVENT' | 'SELF_REPORT' | 'ASSUMED' | null;
   scheduledAt: Date | null;
   createdAt: Date;
+  /** Set by the payment webhook — the authority for payment, never a client callback. */
+  paidAt: Date | null;
   offeringTitle: string | null;
   offeringPriceUsdCents: number | null;
   /** §9's three-way AND, resolved by the caller — whether a checkout step existed for this intent. */
@@ -33,13 +36,7 @@ export type BookingRow = {
  * still be choosing a time".
  */
 export function BookingsSection({ rows }: { rows: BookingRow[] }) {
-  const awaitingPayment = rows.filter(
-    (r) => r.status === 'SCHEDULED' && r.paymentsLive && (r.offeringPriceUsdCents ?? 0) > 0,
-  );
-  // Everything scheduled that had no checkout to begin with — free consults and off-platform
-  // sales. Booked and DONE, not owing anything, so it must not sit under "awaiting payment".
-  const booked = rows.filter((r) => r.status === 'SCHEDULED' && !awaitingPayment.includes(r));
-  const leads = rows.filter((r) => r.status === 'PENDING' || r.status === 'ABANDONED');
+  const { awaitingPayment, booked, paid, leads } = groupBookings(rows);
 
   if (rows.length === 0) {
     return (
@@ -71,6 +68,13 @@ export function BookingsSection({ rows }: { rows: BookingRow[] }) {
         />
       )}
       {booked.length > 0 && <Group title="Booked" rows={booked} />}
+      {paid.length > 0 && (
+        <Group
+          title="Paid"
+          hint="Whop pays these out to your connected account on their schedule."
+          rows={paid}
+        />
+      )}
       {leads.length > 0 && (
         <Group
           title="Enquiries — no time picked"

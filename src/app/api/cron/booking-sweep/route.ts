@@ -7,6 +7,8 @@ import { paymentsLive } from '@/lib/booking-flow';
 import {
   COLD_LEAD_MS,
   RESUME_AFTER_CAPTURE_MS,
+  paidConfirmationCopy,
+  paidNoticeCopy,
   resumeCopy,
   resumeDecision,
   scheduledNoticeCopy,
@@ -22,7 +24,8 @@ export const dynamic = 'force-dynamic';
  *
  *   1. RESUME  — a buyer who reached a checkout and did not pay gets one email with a resume link.
  *   2. NOTIFY  — the practitioner is told someone picked a time.
- *   3. COLD    — a PENDING intent that never reached a checkout is relabelled ABANDONED. NO buyer
+ *   3. PAID    — BOTH sides are told the payment landed.
+ *   4. COLD    — a PENDING intent that never reached a checkout is relabelled ABANDONED. NO buyer
  *                email: there is nothing to resume, so mailing them would be marketing.
  *
  * Like trial-sweep, this exists because the thing it reacts to IS NOT AN EVENT. Nobody abandons a
@@ -67,6 +70,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const emailConfigured = !!process.env.RESEND_API_KEY;
   const resume: Summary = { matched: 0, sent: 0, skipped: 0, failed: 0 };
   const notify: Summary = { matched: 0, sent: 0, skipped: 0, failed: 0 };
+  const paid: Summary = { matched: 0, sent: 0, skipped: 0, failed: 0 };
   const skipReasons: Record<string, number> = {};
   const failures: { job: string; intentId: string; error: string }[] = [];
 
@@ -276,6 +280,91 @@ export async function GET(request: Request): Promise<NextResponse> {
         console.error('[booking-sweep] NOTICE SEND FAILED', JSON.stringify({ intentId: intent.id, error: message }));
       }
     }
+    // ── Payment confirmations, to BOTH sides ─────────────────────────────────────────────────
+    //
+    // Sent from HERE and not from the `payment.succeeded` webhook on purpose: Whop retries a
+    // webhook 3x over ~70s and then drops it permanently, so that handler must acknowledge fast
+    // and never block on an email. src/lib/email.ts says exactly this.
+    //
+    // Ungated by notification preferences, like the scheduled notice: money changing hands is not
+    // a marketing notification, and until now NOTHING was sent on payment to anyone.
+    const paidRows = await prisma.bookingIntent.findMany({
+      where: { paidAt: { not: null }, paidNoticeSentAt: null },
+      select: {
+        id: true,
+        publicToken: true,
+        name: true,
+        email: true,
+        phone: true,
+        status: true,
+        scheduledAt: true,
+        practitioner: {
+          select: { slug: true, displayName: true, user: { select: { email: true } } },
+        },
+        offering: { select: { title: true, priceUsdCents: true } },
+      },
+      orderBy: { paidAt: 'asc' },
+      take: CANDIDATE_TAKE,
+    });
+
+    paid.matched = paidRows.length;
+    for (const intent of paidRows) {
+      const bookingUrl = `${SITE_URL}/practitioners/${encodeURIComponent(
+        intent.practitioner.slug,
+      )}/book/${intent.publicToken}`;
+      const amount = intent.offering?.priceUsdCents ?? null;
+
+      try {
+        // The buyer first: they are the one who just spent money and is waiting to hear.
+        await sendEmail({
+          to: intent.email,
+          ...paidConfirmationCopy({
+            firstName: intent.name.split(' ')[0] ?? '',
+            practitionerName: intent.practitioner.displayName,
+            offeringTitle: intent.offering?.title ?? null,
+            amountUsdCents: amount,
+            bookingUrl,
+            // A buyer CAN pay without picking a time (D8 never hard-gates), so the copy must not
+            // tell that person they are all set.
+            scheduled: intent.scheduledAt !== null,
+          }),
+          idempotencyKey: `booking-paid-buyer/${intent.id}`,
+          tags: [{ name: 'feature', value: 'booking-paid' }],
+        });
+
+        const to = intent.practitioner.user.email;
+        if (to) {
+          await sendEmail({
+            to,
+            ...paidNoticeCopy({
+              buyerName: intent.name,
+              buyerEmail: intent.email,
+              buyerPhone: intent.phone,
+              offeringTitle: intent.offering?.title ?? null,
+              amountUsdCents: amount,
+              dashboardUrl: `${SITE_URL}/practitioners/${encodeURIComponent(
+                intent.practitioner.slug,
+              )}/edit`,
+            }),
+            idempotencyKey: `booking-paid-practitioner/${intent.id}`,
+            tags: [{ name: 'feature', value: 'booking-paid' }],
+          });
+        }
+
+        // Marked only after BOTH sends. A partial failure retries both next run; Resend's key
+        // makes the already-delivered one a no-op, so the buyer cannot be double-mailed.
+        await prisma.bookingIntent.update({
+          where: { id: intent.id },
+          data: { paidNoticeSentAt: new Date() },
+        });
+        paid.sent += 1;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        paid.failed += 1;
+        failures.push({ job: 'paid', intentId: intent.id, error: message });
+        console.error('[booking-sweep] PAID NOTICE FAILED', JSON.stringify({ intentId: intent.id, error: message }));
+      }
+    }
   }
 
   // ── State (a): captured, never reached a checkout, now cold ────────────────────────────────
@@ -302,7 +391,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const ok = failures.length === 0 && emailConfigured;
   return NextResponse.json(
-    { ok, emailConfigured, resume, notify, skipReasons, abandoned: cold.count, failures },
+    { ok, emailConfigured, resume, notify, paid, skipReasons, abandoned: cold.count, failures },
     { status: failures.length === 0 ? 200 : 207 },
   );
 }

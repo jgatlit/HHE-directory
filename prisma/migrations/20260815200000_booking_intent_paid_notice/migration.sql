@@ -1,0 +1,14 @@
+-- Exactly-once marker for the payment confirmation sent to both the buyer and the practitioner.
+--
+-- Until now NOTHING was emailed on payment: `sendEmail` appeared only in the capture lead email,
+-- trial-sweep and booking-sweep. So a successful payment notified neither side, and the
+-- practitioner's dashboard row simply DISAPPEARED (the Bookings query filters `paidAt: null`) —
+-- making "collected" and "deleted" look identical from their side.
+--
+-- Sent from the sweep, not the webhook: Whop retries a webhook 3x over ~70s then drops it
+-- permanently, so the handler must ack fast and never block on an email.
+--
+-- Additive and nullable. Existing PAID rows get NULL, so they are eligible for one notice on the
+-- next sweep — deliberate: there is exactly one such row today (an operator test), and a late
+-- confirmation is better than a permanently silent one.
+ALTER TABLE "BookingIntent" ADD COLUMN "paidNoticeSentAt" TIMESTAMP(3);

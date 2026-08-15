@@ -65,10 +65,12 @@ beforeAll(async () => {
  * mockResolvedValue fed the notice loop rows shaped for the resume loop, which crashed the route
  * and made every send assertion fail for a reason that had nothing to do with the assertion.
  */
-function whenQueried({ resume = [], notify = [] }: { resume?: unknown[]; notify?: unknown[] }) {
+function whenQueried({ resume = [], notify = [], paid = [] }: { resume?: unknown[]; notify?: unknown[]; paid?: unknown[] }) {
   mocks.findMany.mockImplementation(async (args) => {
     const where = (args as { where: Record<string, unknown> }).where;
-    return 'resumeEmailSentAt' in where ? resume : notify;
+    if ('resumeEmailSentAt' in where) return resume;
+    if ('paidNoticeSentAt' in where) return paid;
+    return notify;
   });
 }
 
@@ -313,5 +315,76 @@ describe('practitioner notices', () => {
     });
     await GET(req());
     expect(mocks.sendEmail).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Payment confirmations. Before these, `sendEmail` appeared only in the capture lead email,
+ * trial-sweep and this sweep — so a successful payment notified NEITHER side, while the dashboard
+ * silently dropped the row (it filtered `paidAt: null`), making "collected" and "deleted"
+ * indistinguishable from the practitioner's side.
+ */
+describe('payment confirmations', () => {
+  function paidRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'int_p',
+      publicToken: 'tok_p',
+      name: 'Dana Reed',
+      email: 'dana@example.com',
+      phone: null,
+      status: 'PAID',
+      scheduledAt: new Date(),
+      practitioner: { slug: 'sarah', displayName: 'Sarah Schindler', user: { email: 'sarah@example.com' } },
+      offering: { title: 'Root Cause Release', priceUsdCents: 5500 },
+      ...over,
+    };
+  }
+
+  it('emails BOTH the buyer and the practitioner, with distinct idempotency keys', async () => {
+    whenQueried({ paid: [paidRow()] });
+    await GET(req());
+    const to = mocks.sendEmail.mock.calls.map((c) => (c[0] as { to: string }).to);
+    expect(to).toContain('dana@example.com');
+    expect(to).toContain('sarah@example.com');
+    const keys = mocks.sendEmail.mock.calls.map((c) => (c[0] as { idempotencyKey: string }).idempotencyKey);
+    // Distinct, or Resend's 24h de-dup would swallow the second send entirely.
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toContain('booking-paid-buyer/int_p');
+    expect(keys).toContain('booking-paid-practitioner/int_p');
+  });
+
+  it('only selects paid intents not already notified', async () => {
+    await GET(req());
+    const where = mocks.findMany.mock.calls
+      .map((c) => (c[0] as { where: Record<string, unknown> }).where)
+      .find((w) => 'paidNoticeSentAt' in w);
+    expect(where).toBeTruthy();
+    expect(where!.paidNoticeSentAt).toBeNull();
+    expect(where!.paidAt).toEqual({ not: null });
+  });
+
+  it('marks sent only after BOTH sends succeed, so a partial failure retries', async () => {
+    whenQueried({ paid: [paidRow()] });
+    // Practitioner send fails; buyer send already succeeded.
+    mocks.sendEmail.mockResolvedValueOnce({ id: 'm1' }).mockRejectedValueOnce(new Error('bounced'));
+    const res = await GET(req());
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(res.status).toBe(207);
+  });
+
+  // A buyer CAN pay without picking a time — D8 never hard-gates — so the copy must not tell
+  // that person they are all set.
+  it('does not tell an unscheduled buyer they have a time booked', async () => {
+    whenQueried({ paid: [paidRow({ scheduledAt: null })] });
+    await GET(req());
+    const buyer = mocks.sendEmail.mock.calls[0]![0] as { text: string };
+    expect(buyer.text).toContain("haven't picked a time");
+  });
+
+  it('does not call its own email a receipt — Whop\'s receipt is neither sent nor verified by us', async () => {
+    whenQueried({ paid: [paidRow()] });
+    await GET(req());
+    const buyer = mocks.sendEmail.mock.calls[0]![0] as { text: string; subject: string };
+    expect(`${buyer.subject} ${buyer.text}`.toLowerCase()).not.toContain('receipt');
   });
 });

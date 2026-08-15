@@ -72,8 +72,12 @@ export function CheckoutStep({ checkoutConfigId, email, returnUrl, fallbackUrl }
           <Check className="h-4 w-4 text-primary" aria-hidden />
           Payment complete — you&apos;re all set.
         </p>
+        {/* Promises only what WE send. This previously read "a receipt is on its way", which
+            referred to Whop's own email — something this codebase neither sends nor has ever
+            verified exists. The confirmation named here is real: booking-sweep sends it, keyed
+            `booking-paid-buyer/<id>`, once the payment webhook has landed. */}
         <p className="text-xs text-muted-foreground">
-          A receipt is on its way to {email}.
+          We&apos;ll email your confirmation to {email}.
         </p>
       </div>
     );
