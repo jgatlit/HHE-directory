@@ -118,6 +118,7 @@ export default async function BookingFlowPage({ params }: Props) {
       offeringId: offering!.id,
       bookingIntentId: intent.id,
       slug: params.slug,
+      publicToken: intent.publicToken,
     })
       // Never fatal — a failed mint degrades to the offering's hosted checkout (§8) rather than
       // stranding a buyer who is ready to pay.

@@ -387,6 +387,8 @@ export async function createBookingCheckoutConfig(params: {
   offeringId: string;
   bookingIntentId: string;
   slug: string;
+  /** The intent's public token — this configuration returns the buyer to their own booking page. */
+  publicToken: string;
 }): Promise<{ checkoutConfigId: string; purchaseUrl: string | null }> {
   const cfg = await whopPost<{ id: string; purchase_url?: string | null }>(
     '/checkout_configurations',
@@ -403,7 +405,13 @@ export async function createBookingCheckoutConfig(params: {
         offering_id: params.offeringId,
         booking_intent_id: params.bookingIntentId,
       },
-      redirect_url: `${baseUrl()}/practitioners/${params.slug}?purchase=success`,
+      // BACK TO THE INTENT, not to the profile. A per-booking configuration can express a
+      // per-booking return, which an offering-level one cannot — so the hosted §8 fallback now
+      // lands on the SAME settled page as the embed and the external-wallet return, instead of
+      // dropping the buyer on a public profile with no acknowledgement that they just paid.
+      // Collapsing the three exits into one is the point; `?purchase=success` had no handler
+      // anywhere and had been a dead parameter since Layer Y shipped.
+      redirect_url: `${baseUrl()}/practitioners/${params.slug}/book/${params.publicToken}`,
     },
     'create booking checkout configuration',
   );

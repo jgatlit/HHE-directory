@@ -106,10 +106,15 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
       where: { status: 'APPROVED' },
       select: { label: true, specialtyId: true },
     }),
-    // §10 — the scheduled-but-unpaid obligation. Unpaid intents only: this is a work queue, not
-    // a sales ledger, and a paid booking needs nothing from the practitioner here.
+    // §10 — the scheduled-but-unpaid obligation, PLUS paid bookings.
+    //
+    // Paid ones were previously excluded as "not a work queue item". That made the row simply
+    // VANISH the moment payment landed — no notification, no completed state — so from the
+    // practitioner's side a collected booking and a deleted one looked identical, and the only
+    // way to tell was to go and read Whop. Showing them is what makes the outstanding list
+    // trustworthy: a row leaving it now means something visible happened.
     prisma.bookingIntent.findMany({
-      where: { practitionerId: practitioner.id, paidAt: null, status: { not: 'PAID' } },
+      where: { practitionerId: practitioner.id },
       select: {
         id: true,
         name: true,
@@ -120,6 +125,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
         scheduleSignal: true,
         scheduledAt: true,
         createdAt: true,
+        paidAt: true,
         offering: {
           select: {
             title: true,
@@ -137,7 +143,15 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
       // booking — and with a take cap, a practitioner with 50+ leads would see the
       // scheduled-but-unpaid rows disappear entirely. That is the exact failure this section was
       // built to fix, so the ordering has to put them first.
-      orderBy: [{ scheduledAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      // Unpaid first regardless of age — those are the ones needing action. `nulls: 'last'` on
+      // BOTH: Postgres sorts NULL as LARGER, so a bare DESC would float every unpaid row (paidAt
+      // null) above the paid ones on the first key and every lead above every booking on the
+      // second — burying the rows this section exists to surface behind a take cap.
+      orderBy: [
+        { paidAt: { sort: 'asc', nulls: 'first' } },
+        { scheduledAt: { sort: 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+      ],
       take: 50,
     }),
   ]);
@@ -152,6 +166,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
     scheduleSignal: i.scheduleSignal,
     scheduledAt: i.scheduledAt,
     createdAt: i.createdAt,
+    paidAt: i.paidAt,
     offeringTitle: i.offering?.title ?? null,
     offeringPriceUsdCents: i.offering?.priceUsdCents ?? null,
     // Resolved HERE via the shared helper rather than in the component, so the dashboard's idea

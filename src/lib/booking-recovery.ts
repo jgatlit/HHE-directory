@@ -255,3 +255,104 @@ ${
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+/**
+ * Payment confirmation — to the PRACTITIONER.
+ *
+ * Nothing was sent on payment before this. `sendEmail` appeared only in the capture lead email,
+ * trial-sweep and this sweep, so a successful payment notified neither side. Worse, the Bookings
+ * dashboard filters `paidAt: null`, so a paid booking simply VANISHED from it — making "collected"
+ * and "deleted" indistinguishable from the practitioner's side.
+ */
+export function paidNoticeCopy(input: {
+  buyerName: string;
+  buyerEmail: string;
+  buyerPhone: string | null;
+  offeringTitle: string | null;
+  amountUsdCents: number | null;
+  dashboardUrl: string;
+}): { subject: string; text: string; html: string } {
+  const what = input.offeringTitle ? ` for ${input.offeringTitle}` : '';
+  const amount =
+    input.amountUsdCents && input.amountUsdCents > 0 ? ` (${formatUsd(input.amountUsdCents)})` : '';
+  const subject = `${input.buyerName} paid${what}`;
+
+  const lines = [
+    `${input.buyerName} has paid${what}${amount}.`,
+    '',
+    `Email: ${input.buyerEmail}`,
+    ...(input.buyerPhone ? [`Phone: ${input.buyerPhone}`] : []),
+    '',
+    // Says plainly where the money is, because it does NOT arrive from us — Whop pays out to the
+    // practitioner's own connected account, and a practitioner who thinks we hold it will ask.
+    'Whop handles the payout to your connected account on their schedule.',
+    '',
+    input.dashboardUrl,
+  ];
+
+  const html = `<div style="font-family: -apple-system, system-ui, sans-serif; font-size: 15px; line-height: 1.6; color: #1a1a1a;">
+<p>${escapeHtml(input.buyerName)} has paid${escapeHtml(what)}${escapeHtml(amount)}.</p>
+<p><strong>Email:</strong> ${escapeHtml(input.buyerEmail)}${
+    input.buyerPhone ? `<br><strong>Phone:</strong> ${escapeHtml(input.buyerPhone)}` : ''
+  }</p>
+<p style="color:#666;">Whop handles the payout to your connected account on their schedule.</p>
+<p><a href="${input.dashboardUrl}">View your dashboard</a></p>
+</div>`;
+
+  return { subject, text: lines.join('\n'), html };
+}
+
+/**
+ * Payment confirmation — to the BUYER.
+ *
+ * Deliberately NOT called a receipt. The checkout screen used to promise "a receipt is on its way",
+ * which referred to Whop's own email — something this codebase neither sends nor has verified.
+ * Promising a document we do not control, and cannot confirm exists, is how a buyer ends up
+ * emailing the practitioner asking where it is.
+ */
+export function paidConfirmationCopy(input: {
+  firstName: string;
+  practitionerName: string;
+  offeringTitle: string | null;
+  amountUsdCents: number | null;
+  bookingUrl: string;
+  scheduled: boolean;
+}): { subject: string; text: string; html: string } {
+  const greeting = input.firstName ? `Hi ${input.firstName},` : 'Hi,';
+  const greetingHtml = input.firstName ? `Hi ${escapeHtml(input.firstName)},` : 'Hi,';
+  const what = input.offeringTitle ?? 'your booking';
+  const amount =
+    input.amountUsdCents && input.amountUsdCents > 0 ? ` ${formatUsd(input.amountUsdCents)}` : '';
+  const subject = `Payment confirmed — ${what} with ${input.practitionerName}`;
+
+  // A buyer can pay WITHOUT having picked a time (§8, D8: never hard-gate). Saying "you're all
+  // set" to that person would be wrong, so the two cases get different closing lines.
+  const next = input.scheduled
+    ? `${input.practitionerName} has your details and your time.`
+    : `If you haven't picked a time yet, you can still do that here:`;
+
+  const lines = [
+    greeting,
+    '',
+    `Your payment${amount} for ${what} with ${input.practitionerName} is confirmed.`,
+    '',
+    next,
+    input.bookingUrl,
+  ];
+
+  const html = `<div style="font-family: -apple-system, system-ui, sans-serif; font-size: 15px; line-height: 1.6; color: #1a1a1a;">
+<p>${greetingHtml}</p>
+<p>Your payment${escapeHtml(amount)} for ${escapeHtml(what)} with ${escapeHtml(
+    input.practitionerName,
+  )} is confirmed.</p>
+<p>${escapeHtml(next)} <a href="${input.bookingUrl}">${input.bookingUrl}</a></p>
+</div>`;
+
+  return { subject, text: lines.join('\n'), html };
+}
+
+/** Local to this module so the email copy does not depend on a UI formatter. */
+function formatUsd(cents: number): string {
+  const d = cents / 100;
+  return Number.isInteger(d) ? `$${d}` : `$${d.toFixed(2)}`;
+}

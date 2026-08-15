@@ -49,6 +49,7 @@ const params = {
   offeringId: 'off_1',
   bookingIntentId: 'int_42',
   slug: 'sarah',
+  publicToken: 'tok_abc',
 };
 
 function sent(spy: ReturnType<typeof vi.fn>) {
@@ -112,6 +113,17 @@ describe('createBookingCheckoutConfig', () => {
     const r = await createBookingCheckoutConfig(params);
     expect(r.checkoutConfigId).toBe('ch_x');
     expect(r.purchaseUrl).toBeNull();
+  });
+
+  // The §8 hosted fallback must land on the SAME settled page as the embed and the wallet return.
+  // The previous `?purchase=success` on the public profile had no handler anywhere and left a
+  // buyer who had just paid staring at an ordinary profile page.
+  it('returns the buyer to their own booking page, not to the public profile', async () => {
+    const spy = mockFetch(OK);
+    await createBookingCheckoutConfig(params);
+    const { body } = sent(spy);
+    expect(body.redirect_url).toContain('/practitioners/sarah/book/tok_abc');
+    expect(body.redirect_url).not.toContain('purchase=success');
   });
 
   it('throws rather than returning a null config when Whop rejects the call', async () => {
