@@ -35,6 +35,7 @@ export function SchedulerStep({
   checkoutComing = false,
 }: Props) {
   const [advanced, setAdvanced] = useState(false);
+  const [stalled, setStalled] = useState(false);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -42,23 +43,35 @@ export function SchedulerStep({
     // Reveal IMMEDIATELY and record in the background. D8 is explicit that our bookkeeping must
     // never gate the buyer, so a slow or failed write must not hold up their journey.
     setAdvanced(true);
+    setStalled(false);
     startTransition(() => {
       onAdvance(signal)
         .then((r) => {
           // Not fatal to the buyer, but it must not be silent: every intent staying PENDING
           // means §10 later emails people who DID schedule, with nothing anywhere saying why.
           if (!r.ok) console.error('[booking] schedule signal refused', { signal });
+          return r.ok;
         })
         .catch((err) => {
           console.error('[booking] schedule signal failed', {
             signal,
             error: err instanceof Error ? err.message : String(err),
           });
+          return false;
         })
-        // Pull the server's next step in. Without this the buyer sits on a client-rendered done
-        // state while the embedded checkout the server would now render never appears.
-        .finally(() => {
-          if (checkoutComing) router.refresh();
+        .then((ok) => {
+          // Pull the server's next step in. Without this the buyer sits on a client-rendered done
+          // state while the embedded checkout the server would now render never appears.
+          //
+          // ONLY on success, and this is the whole point: the refresh reveals checkout because the
+          // server sees status SCHEDULED. If the signal did not land the status is still PENDING,
+          // so the server re-renders THIS step, React keeps `advanced` at the same position, and
+          // the buyer is left on "Bringing up payment…" forever with no payment path — the
+          // hosted link is deliberately withheld on the embed path. Say so and offer a retry
+          // instead of spinning.
+          if (!checkoutComing) return;
+          if (ok) router.refresh();
+          else setStalled(true);
         });
     });
   }
@@ -72,7 +85,20 @@ export function SchedulerStep({
           {pending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-hidden />}
         </p>
 
-        {checkoutComing ? (
+        {checkoutComing && stalled ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              We couldn&apos;t bring up payment just then.
+            </p>
+            <button
+              type="button"
+              onClick={() => advance('ASSUMED')}
+              className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Try again
+            </button>
+          </div>
+        ) : checkoutComing ? (
           <p className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
             Bringing up payment…
@@ -190,7 +216,10 @@ export function SchedulerStep({
             onClick={() => advance('ASSUMED')}
             className="text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
           >
-            {checkoutUrl ? 'Skip to payment' : 'Continue'}
+            {/* Keyed on EITHER route to payment. Reading only `checkoutUrl` labelled the embed
+                path — the one flow where payment is guaranteed next — as a bland "Continue",
+                because that path deliberately passes a null url. */}
+            {checkoutUrl || checkoutComing ? 'Skip to payment' : 'Continue'}
           </button>
         </div>
       </div>

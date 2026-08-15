@@ -378,8 +378,8 @@ export async function createOfferingCheckout(params: {
 export async function createBookingCheckoutSession(params: {
   checkoutConfigurationId: string;
   bookingIntentId: string;
-}): Promise<{ sessionId: string }> {
-  const session = await whopPost<{ id: string }>(
+}): Promise<{ sessionId: string; expiresAt: Date | null }> {
+  const session = await whopPost<{ id: string; expires_at?: unknown }>(
     '/checkout_sessions',
     {
       checkout_configuration: params.checkoutConfigurationId,
@@ -387,7 +387,13 @@ export async function createBookingCheckoutSession(params: {
     },
     'create booking checkout session',
   );
-  return { sessionId: session.id };
+  // Whop's own expiry, returned verbatim rather than assumed — a session is short-lived (probed
+  // live 2026-08-15: exactly 24h), and the caller stores this so an abandonment email hours later
+  // re-mints instead of remounting a dead session. Null when absent or unparseable, which the
+  // caller must read as "unknown age" — never as "does not expire".
+  const raw = typeof session.expires_at === 'string' ? new Date(session.expires_at) : null;
+  const expiresAt = raw && !Number.isNaN(raw.getTime()) ? raw : null;
+  return { sessionId: session.id, expiresAt };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

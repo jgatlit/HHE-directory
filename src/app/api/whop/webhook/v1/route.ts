@@ -235,24 +235,54 @@ async function handleEvent(
       // shapes, so every plausible location is checked rather than assuming one.
       const intentId = bookingIntentIdFrom(data);
       if (!intentId) {
-        // Layer X subscription payments legitimately carry no booking intent — not an error.
-        return null;
+        // Layer X subscription payments legitimately carry no booking intent. Layer Y offering
+        // payments are told apart by `offering_id`, which the checkout CONFIGURATION contributes
+        // to every session's metadata (verified live 2026-08-15: config metadata merges with the
+        // per-session metadata rather than being replaced).
+        //
+        // Reporting the Layer Y case matters because it is reachable: the §8 hosted-checkout
+        // fallback is minted from the configuration and carries no booking_intent_id, so a buyer
+        // who takes it pays for real against an intent we cannot name. Returning null here would
+        // stamp that row healthy-green with error null — the exact silent failure `unresolved()`
+        // was written to end, on the one event that moves money.
+        const offeringId = asString(asRecord(data.metadata)?.offering_id);
+        if (!offeringId) return null;
+        const ref = asString(data.id) ?? 'unknown';
+        const message = `payment.succeeded for offering ${offeringId} carried no booking_intent_id (payment ${ref}) — paid, but attributable to no booking`;
+        console.error(`v1 webhook: ${message}`);
+        return message;
       }
-      const paid = await prisma.bookingIntent.updateMany({
-        // Never re-writes an already-paid intent: `paidAt: null` is the idempotency guard, so a
-        // Whop retry (3x over ~70s) cannot double-record.
+
+      const intent = await prisma.bookingIntent.findUnique({
+        where: { id: intentId },
+        select: { id: true, practitionerId: true, paidAt: true },
+      });
+      if (!intent) return `payment.succeeded referenced unknown booking intent ${intentId}`;
+
+      // `booking_intent_id` is metadata on a checkout session, and anyone able to create a session
+      // on a connected company can choose its value. Intent ids are cuids — timestamp-prefixed and
+      // enumerable — so without this check one connected practitioner could pay $1 against a
+      // RIVAL's intent id and flip it to PAID, permanently dead-ending that buyer (the flow's
+      // settled branch gates the whole render) while the real practitioner never collects.
+      //
+      // Deliberately verified only when the event names a company we recognise. A payment payload
+      // that carries no resolvable company reference is passed through rather than refused: this
+      // guard must not become a way to drop REAL payments, and an unverifiable event is a weaker
+      // problem than a mis-attributed one.
+      const payer = await resolvePractitioner(data, envelope);
+      if (payer && payer.id !== intent.practitionerId) {
+        const message = `payment.succeeded for booking intent ${intentId} arrived on company ${payer.whopCompanyId} but that intent belongs to a different practitioner — REFUSED, not marked paid`;
+        console.error(`v1 webhook: ${message}`);
+        return message;
+      }
+
+      // Never re-writes an already-paid intent: `paidAt: null` is the idempotency guard, so a Whop
+      // retry (3x over ~70s) cannot double-record. A zero count here means it was already paid,
+      // which is the expected retry path — the unknown-id case was ruled out above.
+      await prisma.bookingIntent.updateMany({
         where: { id: intentId, paidAt: null },
         data: { status: 'PAID', paidAt: new Date() },
       });
-      if (paid.count === 0) {
-        // Either already recorded (fine, retries are expected) or an id we do not know — which is
-        // worth saying out loud, because it means money moved against an intent we cannot see.
-        const exists = await prisma.bookingIntent.findUnique({
-          where: { id: intentId },
-          select: { id: true },
-        });
-        if (!exists) return `payment.succeeded referenced unknown booking intent ${intentId}`;
-      }
       return null;
     }
     default:

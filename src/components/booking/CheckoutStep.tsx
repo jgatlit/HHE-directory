@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { WhopCheckoutEmbed } from '@whop/checkout/react';
 import { Check, Loader2 } from 'lucide-react';
 
 type Props = {
-  planId: string;
   /** `chs_…` from createBookingCheckoutSession — carries booking_intent_id. */
   sessionId: string;
   /** Captured at step 1. Whop CAN lock this; Calendly cannot (§6) — so here it is authoritative. */
@@ -31,16 +31,30 @@ type Props = {
  * the two values printed in the URL — so anyone holding a booking link could record a sale that
  * never happened, and permanently dead-end that buyer. It also meant a tab closed mid-redirect
  * was never recorded at all. Do not reintroduce a client-side writer here.
+ *
+ * NO `planId` PROP. The library builds its iframe url as `sessionId || planId` and appends
+ * `?session=<sessionId>`, so a plan id passed alongside a session is dead at runtime
+ * (node_modules/@whop/checkout/dist/static/checkout/react/index.js). Passing it implied the mount
+ * was addressed by plan, which it is not, and made the page thread a value nothing consumed.
  */
-export function CheckoutStep({
-  planId,
-  sessionId,
-  email,
-  returnUrl,
-  fallbackUrl,
-}: Props) {
+export function CheckoutStep({ sessionId, email, returnUrl, fallbackUrl }: Props) {
   const [paid, setPaid] = useState(false);
   const [failed, setFailed] = useState(false);
+  const router = useRouter();
+
+  // Pull the server's settled view in once the webhook has had a moment to land. Without this the
+  // buyer sits on a client-only "complete" screen, and a reload before the webhook arrives
+  // re-renders a live payment form on a session they have already paid — the embed has no way to
+  // know it is done, because `paidAt` is what decides that and it lives on the server.
+  useEffect(() => {
+    if (!paid) return;
+    const t = setInterval(() => router.refresh(), 3000);
+    const stop = setTimeout(() => clearInterval(t), 30_000);
+    return () => {
+      clearInterval(t);
+      clearTimeout(stop);
+    };
+  }, [paid, router]);
 
   if (paid) {
     return (
@@ -60,21 +74,29 @@ export function CheckoutStep({
     <section className="space-y-3">
       <h2 className="text-sm font-medium">Payment</h2>
 
-      {failed && fallbackUrl && (
-        // §8 — the embed can fail to mount for reasons we cannot detect cross-origin. The hosted
-        // checkout is the documented fallback rather than a dead end.
+      {failed && (
+        // §8 — the hosted checkout is the documented fallback rather than a dead end. It is
+        // UNATTRIBUTED (minted from the offering's configuration, so it carries practitioner_id
+        // and offering_id but no booking_intent_id): a payment taken through it reconciles to no
+        // intent, which the webhook now reports rather than swallowing. Offered anyway, because a
+        // buyer who cannot pay at all is the worse outcome — but it is a last resort, not a peer.
         <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
-          Couldn&apos;t load the payment form.{' '}
-          <a href={fallbackUrl} className="font-medium underline underline-offset-2">
-            Open checkout in a new tab
-          </a>
-          .
+          {fallbackUrl ? (
+            <>
+              Couldn&apos;t complete the payment form.{' '}
+              <a href={fallbackUrl} className="font-medium underline underline-offset-2">
+                Open checkout in a new tab
+              </a>
+              .
+            </>
+          ) : (
+            <>Couldn&apos;t complete the payment form. Please refresh and try again.</>
+          )}
         </p>
       )}
 
       <div className="overflow-hidden rounded-md border bg-card">
         <WhopCheckoutEmbed
-          planId={planId}
           sessionId={sessionId}
           returnUrl={returnUrl}
           prefill={{ email }}
@@ -89,6 +111,12 @@ export function CheckoutStep({
           // Optimistic display only. The webhook records the payment; this just stops the buyer
           // staring at a checkout form they have already completed while it lands.
           onComplete={() => setPaid(true)}
+          // The embed DOES tell us when payment fails — surfacing the fallback only when the buyer
+          // notices a small grey link was leaving declines invisible to them and to us.
+          onPaymentError={(error) => {
+            console.error('[booking] embedded checkout payment error', error);
+            setFailed(true);
+          }}
         />
       </div>
 

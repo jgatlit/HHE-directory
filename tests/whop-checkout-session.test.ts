@@ -91,4 +91,29 @@ describe('createBookingCheckoutSession', () => {
       createBookingCheckoutSession({ checkoutConfigurationId: 'ch_x', bookingIntentId: 'i' }),
     ).rejects.toThrow();
   });
+
+  // A session is short-lived — probing live on 2026-08-15 returned expires_at exactly 24h out.
+  // The caller stores this so §10's abandonment email re-mints instead of remounting a dead
+  // session, which is the one case the whole resume flow is built around.
+  it('returns Whop’s own expires_at, so a stored session can be aged out', async () => {
+    mockFetch({ id: 'chs_abc', expires_at: '2026-08-16T05:53:14.102Z' });
+    const r = await createBookingCheckoutSession({
+      checkoutConfigurationId: 'ch_cfg1',
+      bookingIntentId: 'int_1',
+    });
+    expect(r.expiresAt?.toISOString()).toBe('2026-08-16T05:53:14.102Z');
+  });
+
+  // Null must mean "unknown age, re-mint", never "does not expire" — the caller keys re-minting
+  // on this, so a silently-absent expiry that read as durable would resurrect the exact bug.
+  it('returns null — not a fabricated expiry — when Whop omits or mangles expires_at', async () => {
+    for (const body of [{ id: 'chs_a' }, { id: 'chs_a', expires_at: 'not-a-date' }, { id: 'chs_a', expires_at: 12345 }]) {
+      mockFetch(body);
+      const r = await createBookingCheckoutSession({
+        checkoutConfigurationId: 'ch_cfg1',
+        bookingIntentId: 'int_1',
+      });
+      expect(r.expiresAt).toBeNull();
+    }
+  });
 });
