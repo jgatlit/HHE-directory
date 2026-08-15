@@ -121,10 +121,23 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
         scheduledAt: true,
         createdAt: true,
         offering: {
-          select: { title: true, priceUsdCents: true, acceptsPayments: true, whopPlanId: true },
+          select: {
+            title: true,
+            priceUsdCents: true,
+            acceptsPayments: true,
+            whopPlanId: true,
+            // Without this the dashboard calls an archived offering payable while the flow page
+            // refuses to render its checkout — a permanent, unpayable dun.
+            archived: true,
+          },
         },
       },
-      orderBy: [{ scheduledAt: 'desc' }, { createdAt: 'desc' }],
+      // `nulls: 'last'` is load-bearing. Postgres sorts NULL as LARGER, so a bare
+      // `scheduledAt DESC` puts every PENDING lead (scheduledAt null) ABOVE every scheduled
+      // booking — and with a take cap, a practitioner with 50+ leads would see the
+      // scheduled-but-unpaid rows disappear entirely. That is the exact failure this section was
+      // built to fix, so the ordering has to put them first.
+      orderBy: [{ scheduledAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
       take: 50,
     }),
   ]);
@@ -143,13 +156,18 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
     offeringPriceUsdCents: i.offering?.priceUsdCents ?? null,
     // Resolved HERE via the shared helper rather than in the component, so the dashboard's idea
     // of "was there a payment to make?" cannot drift from the flow page's or the sweep's.
-    paymentsLive: i.offering
-      ? paymentsLive({
-          acceptsPayments: i.offering.acceptsPayments,
-          practitionerPayoutsEnabled: practitioner.whopPayoutsEnabled,
-          whopPlanId: i.offering.whopPlanId,
-        })
-      : false,
+    //
+    // The `archived` test is part of that agreement, not an extra: resumeDecision() refuses an
+    // archived offering and the flow page nulls it, so omitting it here left the dashboard duns
+    // for money the buyer has no way to pay, under a hint reading "a nudge usually does it".
+    paymentsLive:
+      i.offering && !i.offering.archived
+        ? paymentsLive({
+            acceptsPayments: i.offering.acceptsPayments,
+            practitionerPayoutsEnabled: practitioner.whopPayoutsEnabled,
+            whopPlanId: i.offering.whopPlanId,
+          })
+        : false,
   }));
 
   // Dual-label: seed the combobox with each selected specialty's raw phrasing (their voice),

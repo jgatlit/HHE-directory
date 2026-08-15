@@ -45,6 +45,19 @@ export type ResumeCandidate = {
   paidAt: Date | null;
   createdAt: Date;
   scheduledAt: Date | null;
+  /** Set once §10's resume email has gone out. The exactly-once guard — see the column. */
+  resumeEmailSentAt: Date | null;
+  /**
+   * `whopCheckoutSessionId` — non-null ONLY once the flow actually rendered a checkout for this
+   * intent, since the session is minted at that moment and nowhere else.
+   *
+   * This is what identifies §5's "subscription / no scheduling" cohort (1 → 3). Those intents
+   * never pass a scheduler, so their status stays PENDING even after the buyer opens a real Whop
+   * checkout and walks away — the textbook state (b). Keying recovery on `status === 'SCHEDULED'`
+   * alone left the highest-value path with no recovery at all, and then filed those buyers as
+   * ABANDONED under a comment asserting they never reached a checkout.
+   */
+  reachedCheckout: boolean;
   offering: {
     archived: boolean;
     acceptsPayments: boolean;
@@ -71,8 +84,21 @@ export type ResumeDecision = { send: true } | { send: false; reason: string };
  */
 export function resumeDecision(intent: ResumeCandidate, now: Date): ResumeDecision {
   if (intent.paidAt !== null) return { send: false, reason: 'already-paid' };
-  if (intent.status !== 'SCHEDULED') return { send: false, reason: `status-${intent.status}` };
-  if (!intent.scheduledAt) return { send: false, reason: 'no-scheduled-at' };
+  // EXACTLY ONCE. Resend's 24h key is a retry guard, not a lifetime one — without this a buyer
+  // who decided not to buy is chased daily forever, because nothing else ever makes an unpaid
+  // intent stop matching.
+  if (intent.resumeEmailSentAt !== null) return { send: false, reason: 'already-sent' };
+
+  // Two routes into state (b), because §5 has two ways to reach a checkout. The scheduled route
+  // is the common one; `reachedCheckout` covers the 1 → 3 cohort whose status never leaves
+  // PENDING because there is no scheduler step to advance it.
+  if (intent.status === 'SCHEDULED') {
+    if (!intent.scheduledAt) return { send: false, reason: 'no-scheduled-at' };
+  } else if (intent.status === 'PENDING') {
+    if (!intent.reachedCheckout) return { send: false, reason: 'never-reached-checkout' };
+  } else {
+    return { send: false, reason: `status-${intent.status}` };
+  }
 
   const offering = intent.offering;
   // §10: "no abandoned-intent email where there is no checkout to abandon". With no offering
@@ -97,7 +123,12 @@ export function resumeDecision(intent: ResumeCandidate, now: Date): ResumeDecisi
   if (t - intent.createdAt.getTime() < RESUME_AFTER_CAPTURE_MS) {
     return { send: false, reason: 'too-soon-since-capture' };
   }
-  if (t - intent.scheduledAt.getTime() < RESUME_FLOOR_AFTER_SCHEDULE_MS) {
+  // Only meaningful on the scheduled route. The 1 → 3 cohort has no scheduling moment, so the
+  // capture anchor is the only timer that applies to them.
+  if (
+    intent.scheduledAt &&
+    t - intent.scheduledAt.getTime() < RESUME_FLOOR_AFTER_SCHEDULE_MS
+  ) {
     return { send: false, reason: 'too-soon-since-schedule' };
   }
   return { send: true };
@@ -119,7 +150,12 @@ export function resumeCopy(input: {
   offeringTitle: string;
   resumeUrl: string;
 }): { subject: string; text: string; html: string } {
+  // firstName comes from `intent.name.split(' ')[0]` — the untrusted public capture form. The
+  // HTML greeting is built from the ESCAPED value; every other interpolation in this template was
+  // already escaped and this one was not, so a name containing `&` produced invalid markup and a
+  // name containing a tag injected live markup into mail sent from the verified domain.
   const greeting = input.firstName ? `Hi ${input.firstName},` : 'Hi,';
+  const greetingHtml = input.firstName ? `Hi ${escapeHtml(input.firstName)},` : 'Hi,';
   const subject = `Finish booking ${input.offeringTitle} with ${input.practitionerName}`;
 
   const text = [
@@ -134,7 +170,7 @@ export function resumeCopy(input: {
   ].join('\n');
 
   const html = `<div style="font-family: -apple-system, system-ui, sans-serif; font-size: 15px; line-height: 1.6; color: #1a1a1a;">
-<p>${greeting}</p>
+<p>${greetingHtml}</p>
 <p>You picked a time with ${escapeHtml(input.practitionerName)} for ${escapeHtml(
     input.offeringTitle,
   )}, but the payment step is still open.</p>
@@ -165,7 +201,14 @@ export function scheduledNoticeCopy(input: {
   awaitingPayment: boolean;
 }): { subject: string; text: string; html: string } {
   const what = input.offeringTitle ? ` · ${input.offeringTitle}` : '';
-  const subject = `${input.buyerName} booked a time${what}`;
+  // The SUBJECT hedges too, not just the body. It is the part shown in inbox lists, push
+  // notifications and lock screens, and often the only part read — so stating "booked a time" as
+  // fact for an ASSUMED signal is precisely the dashboard-lying-on-the-calendar's-behalf that the
+  // body is careful to avoid.
+  const subject =
+    input.signal === 'ASSUMED'
+      ? `${input.buyerName} may have booked a time${what}`
+      : `${input.buyerName} booked a time${what}`;
 
   // §8: `assumed` means they advanced past the scheduler without a provider event and without
   // clicking "I've booked my time". Saying so plainly is the entire point of recording it —

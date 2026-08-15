@@ -130,9 +130,22 @@ function Group({
                   {r.phone}
                 </a>
               )}
+              {/*
+                LABELLED, and never bare. `scheduledAt` is OUR OBSERVATION TIME — the moment the
+                buyer advanced past the calendar — and both the schema and the action that writes
+                it say in as many words: "not the appointment time; we do not know when the
+                appointment is and must not imply we do." Rendered unlabelled next to a calendar
+                icon under a heading reading "Booked", a practitioner would read it as the slot.
+                The practitioner's own calendar remains the source of truth (§18).
+
+                The two states also mean different things — when they told us vs when they first
+                got in touch — so the label distinguishes them rather than sharing one column.
+              */}
               <span className="flex items-center gap-1">
                 <CalendarClock className="h-3 w-3" aria-hidden />
-                {formatWhen(r.scheduledAt ?? r.createdAt)}
+                {r.scheduledAt
+                  ? `Told us ${formatWhen(r.scheduledAt)}`
+                  : `Enquired ${formatWhen(r.createdAt)}`}
               </span>
               <SignalBadge signal={r.scheduleSignal} />
             </div>
@@ -160,11 +173,24 @@ function SignalBadge({ signal }: { signal: BookingRow['scheduleSignal'] }) {
   return <Badge variant="outline">Unconfirmed — check your calendar</Badge>;
 }
 
+/**
+ * Explicit `timeZone`, and the zone is named in the output.
+ *
+ * This is a SERVER component, so an omitted timeZone formats in the Node process's zone — UTC on
+ * Vercel. A Georgia practitioner (61% of this directory, per the seed directive) would have seen
+ * a 3:14 PM enquiry rendered as 7:14 PM with nothing on the row saying why: silently wrong rather
+ * than visibly odd. trial-sweep's formatter already passes the zone explicitly for this reason.
+ *
+ * `year` is included because without it a booking from a previous January renders identically to
+ * one from this January.
+ */
 function formatWhen(d: Date): string {
-  return new Intl.DateTimeFormat('en-US', {
+  return `${new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  }).format(d);
+  }).format(d)} UTC`;
 }
