@@ -23,11 +23,14 @@ checkout**, with the profile-side §4 CTA hierarchy feeding it and `/api/cron/bo
 | #60 | Flow route skeleton + step 1 CAPTURE |
 | #61 | Step 2 SCHEDULE on the null adapter + T2 self-report |
 | #62 | Profile CTA hierarchy, expand-in-place cards, chooser |
-| #63 | Step 3 CHECKOUT — Whop embedded, addressed by **checkout session** |
+| #63 | Step 3 CHECKOUT — Whop embedded |
 | #64 | `publicToken` — the flow URL is no longer the cuid primary key |
 | #66 | §10 abandonment + recovery (resume email, scheduled-but-unpaid view) |
+| #68 | 🚨 **Incident fix** — mount checkout by CONFIGURATION id; `chs_` sessions render Whop's 404 |
+| #69 | Post-checkout confirmation, payment notices to both sides, paid state on the dashboard |
+| #70 | Booking gated by `bookableWhere()` — unlisted profiles stay bookable |
 
-Tests **69 → 296**.
+Tests **69 → 331**.
 
 ## The three things most worth not re-deriving
 
@@ -47,28 +50,69 @@ Resend's `idempotencyKey` de-duplicates for **24 hours only**, and nothing else 
 unpaid intent from the sweep's candidate set — so keys alone meant one email *per day, forever*,
 for any buyer who simply decided not to buy.
 
+## 🚨 The incident, and the lesson worth keeping
+
+Step 3 originally mounted a `chs_…` checkout **session** — which is exactly what
+`@whop/checkout`'s own docstring instructs. **Whop's embedded checkout does not resolve those
+ids.** Every buyer reaching payment saw *"Nothing to see here yet"* for roughly four hours.
+
+| `/embedded/checkout/<id>/` | bytes | product data |
+|---|---|---|
+| `chs_…` | 1.35 MB | **none** |
+| `plan_…` / `ch_…` | 1.41 MB | title + price |
+
+**Why the original probe missed it:** it verified the session could be *created* — `201`, metadata
+merged exactly as designed — and recorded that as "VERIFIED LIVE". **Creation success is not
+renderability.** Nothing about a 201 says the resulting id can be mounted.
+
+The fix mints one checkout **configuration** per booking, bound to the offering's existing plan via
+`plan_id`. Two properties a session could not give us: configurations do **not** expire, so the
+stored id survives §10's resume email however late the buyer returns; and each carries its **own**
+`purchase_url`, which finally makes the §8 fallback attributable.
+
 ## Verified live, not assumed
 
-Probed against Whop's API and the production database on 2026-08-15:
-
-- A **parent Company API key mints checkout sessions on CHILD connected accounts** with no company
-  parameter — `201`, and `account.id` comes back as the child. A review finding claimed the
-  opposite and would have had us "fix" working code.
-- **`expires_at` is exactly 24h.** A stored session is not durable, which matters precisely because
-  §10 deliberately returns a buyer hours later.
-- **A session carries no hosted checkout URL**, so the §8 embed-failure fallback is necessarily the
-  offering's configuration-level `purchaseUrl` — which carries no `booking_intent_id`. That path is
-  structurally unattributable; the webhook now *reports* such payments instead of passing them as
-  benign Layer X rows.
-- **Session metadata merges** with the configuration's rather than replacing it.
-- The sweep, run twice against the real production intent: `{matched 1, sent 1}` then
-  `{matched 0, sent 0}`, with both markers persisted. Exactly-once proven on live data.
+- A **parent Company API key operates on CHILD connected accounts** with no company parameter —
+  `201`, `account.id` is the child. A review finding claimed the opposite and would have had us
+  "fix" working code.
+- **A real end-to-end payment**, 2026-08-15: capture → schedule → embedded checkout → **PAID in
+  54 seconds**. `payment.succeeded` processed with `error: null`, `paidAt` written **57 ms** after
+  receipt, and the webhook metadata carried `{offering_id, practitioner_id, booking_intent_id}` —
+  per-booking attribution proven on real money, which is the thing Layer X never had.
+- The sweep, run twice against a real production intent: `{matched 1, sent 1}` then
+  `{matched 0, sent 0}`, both markers persisted. Exactly-once proven on live data.
+- The bookable matrix, against production: `sarah-schindler` (retired, dead mailbox) refused;
+  `jgatlit-onboard1` (unlisted, real owner) bookable. Unlisted ≠ switched off.
 - Auth: unauthenticated and wrong-secret both `401`.
+
+## Post-checkout, after #69
+
+Three exits now converge on one screen. The embed keeps the buyer in place (`onComplete` implies
+`skipRedirect`); an external wallet returns to the intent URL; and the §8 hosted fallback now
+redirects there too. `?purchase=success` had been a **dead parameter since Layer Y** — nothing
+anywhere read it, so a buyer who paid through the fallback landed on an ordinary profile with no
+acknowledgement.
+
+Both sides are emailed on payment, from the **sweep** rather than the webhook (Whop retries 3× over
+~70s then drops permanently, so the handler must ack fast). The buyer's is deliberately not called
+a receipt — the old checkout copy promised one, referring to a Whop email this codebase neither
+sends nor has verified exists.
+
+Paid bookings now appear on the dashboard. They used to vanish (`paidAt: null` filter), so
+"collected" and "deleted" looked identical to the practitioner.
 
 ## Still open
 
 - ⚠️ **KV / Upstash is unprovisioned on production, so `rateLimit()` is a no-op.** Every bound on
   the public capture and schedule-signal routes is currently decorative. `tsk_4ed1cffe7423469eba7c`.
+- ⚠️ **No enforcement point for BILLING standing exists in the booking flow.** `bookableWhere()`
+  deliberately tests only retirement, so a lapsed-trial practitioner keeps a working checkout.
+  Inert today — every live `trialEndsAt` is null — but it becomes a live policy question the moment
+  `scripts/backfill-trial-dates.ts` starts the pilot clocks: *may someone who stopped paying for
+  their listing still take payments through their direct link?*
+- **Retirement is a backdated trial clock, not a state.** `scripts/retire-*.ts` set `trialEndsAt` to
+  the epoch, and `bookableWhere()` keys on that sentinel. A dedicated `retiredAt` column is the
+  honest fix; today "retired" and "trial expired" are one field holding two meanings.
 - **Soft-404**: `notFound()` returns HTTP **200** with the correct not-found body, repo-wide — there
   is no `not-found.tsx` anywhere in `src/app/`. Not a security issue (scoping is correct, nothing
   leaks) but it makes any live check asserting `404` inert, and `/practitioners/[slug]` is
@@ -83,6 +127,9 @@ Probed against Whop's API and the production database on 2026-08-15:
 
 ## Judgment calls worth knowing about
 
+- **Unlisted profiles stay bookable.** Operator ruling: unlisted means absent from directory
+  *search*, not switched off — which trial-sweep's warning email already promised practitioners.
+  `listedWhere()` answers discovery; `bookableWhere()` answers bookability.
 - **When an intent becomes `ABANDONED`.** The spec restores the status to the enum but never says
   what transitions into it. The sweep applies it **only** to state (a) — captured, never reached a
   checkout, now cold — and **never** to scheduled-but-unpaid however old, because §10 calls that
