@@ -35,13 +35,12 @@ const MUST_HAVE_A_CALLER = [
 /**
  * Public flow routes that must be REACHABLE FROM THE UI, not merely by typing a URL.
  *
- * `/practitioners/[slug]/book` currently fails this deliberately: §17.4a owns the profile CTA
- * hierarchy and has not landed, so the guard records the gap rather than asserting it away.
- * Flip `linked` to true in the PR that wires the CTA — that is the moment this becomes a real
- * assertion instead of a reminder, and it is exactly the step that got skipped for
- * startSubscriptionCheckout (correct, exported, callerless for two and a half months).
+ * §17.4a landed, so `/practitioners/[slug]/book` is now LINKED and this is a real assertion
+ * rather than a recorded gap. If a future change strips the profile CTAs, the flow silently
+ * becomes URL-only again — which is exactly how startSubscriptionCheckout stayed correct,
+ * exported and callerless for two and a half months.
  */
-const FLOW_ROUTES = [{ path: '/practitioners/', segment: 'book', linked: false, owner: '§17.4a' }];
+const FLOW_ROUTES = [{ path: '/practitioners/', segment: 'book', linked: true, owner: '§17.4a' }];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -84,8 +83,14 @@ describe('server-action reachability', () => {
 describe('flow routes are reachable from the UI', () => {
   for (const route of FLOW_ROUTES) {
     it(`${route.segment} flow — linked from a page: expected ${route.linked}`, () => {
+      // Match URL CONSTRUCTION, not a literal href. The CTAs build their targets
+      // (`/practitioners/${slug}/book?${params}`), so an href-shaped regex found nothing and
+      // reported the flow unlinked while it was linked — the guard failing for the wrong reason
+      // is only marginally better than not having it.
       const linked = files.some(
-        (f) => !f.includes(`${sep}book${sep}`) && /href=\{?[`'"][^`'"]*\/book\b/.test(readFileSync(f, 'utf8')),
+        (f) =>
+          !f.includes(`${sep}book${sep}`) &&
+          /\/book\?|\/book['"`]/.test(readFileSync(f, 'utf8')),
       );
       expect(
         linked,

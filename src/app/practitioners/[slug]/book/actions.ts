@@ -108,6 +108,28 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
   // never block — not now, and not after KV is provisioned either.
   if (!limited.success) bounce('TOO_MANY');
 
+  // A SECOND bound that works TODAY, because the one above does not: rate-limit.ts no-ops
+  // without KV and none is provisioned. This became load-bearing the moment §17.4a linked the
+  // flow from the profile and gave it real traffic.
+  //
+  // Scoped per practitioner rather than per IP, because the harm being bounded is a practitioner's
+  // inbox: every capture emails them a lead. An IP bound alone is defeated by rotating IPs; this
+  // caps how much noise any single practitioner can be subjected to regardless of source.
+  // Generous enough that a genuine burst (a newsletter, a podcast mention) is not blocked.
+  const recent = await prisma.bookingIntent.count({
+    where: {
+      practitionerId: practitioner.id,
+      createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
+    },
+  });
+  if (recent >= 15) {
+    console.warn('[booking-capture] per-practitioner burst bound hit', {
+      practitionerId: practitioner.id,
+      recent,
+    });
+    bounce('TOO_MANY');
+  }
+
   // §14.3 — with no explicit context, fall back to the practitioner's designated hero link rather
   // than dead-ending the buyer on "they will be in touch" while a live calendar exists.
   const resolvedLinkId =
