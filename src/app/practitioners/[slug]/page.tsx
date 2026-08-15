@@ -6,7 +6,6 @@ import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { paymentsLive } from '@/lib/booking-flow';
-import { isListed } from '@/lib/practitioner-indexer';
 import { offeringTarget } from '@/lib/profile-ctas';
 import { OfferingCard } from '@/components/practitioners/OfferingCard';
 import { Card } from '@/components/ui/card';
@@ -172,7 +171,6 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 primaryBookingLinkId={p.primaryBookingLinkId}
                 // The SAME gate /book enforces. This page has no listing gate of its own, so
                 // without this a partially-onboarded practitioner's every CTA would 404.
-                isBookable={isListed(p)}
                 websiteUrl={p.websiteUrl}
               />
             </aside>

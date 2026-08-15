@@ -158,7 +158,7 @@ describe('who gets mailed', () => {
     expect(body.skipReasons['payments-not-live']).toBe(1);
   });
 
-  it('queries unpaid, never-yet-mailed, old-enough intents behind the listing gate', async () => {
+  it('queries unpaid, never-yet-mailed, old-enough intents', async () => {
     await GET(req());
     const where = (mocks.findMany.mock.calls[0]![0] as { where: Record<string, unknown> }).where;
     expect(where.paidAt).toBeNull();
@@ -168,8 +168,11 @@ describe('who gets mailed', () => {
     // dropping it here silently widens who is considered.
     const createdAt = where.createdAt as { lte: Date };
     expect(createdAt.lte.getTime()).toBeLessThanOrEqual(Date.now() - 15 * 60 * 1000);
-    // A delisted practitioner's flow page 404s, so a resume link would mail a dead end.
-    expect(where.practitioner).toBeTruthy();
+    // NO listing gate. It was applied here because a delisted practitioner's flow page used to
+    // 404, which made a resume link a dead end — a symptom of the gate on the flow, not a reason
+    // for one here. Unlisted profiles stay bookable at their direct link, so the link resolves
+    // and that buyer is recoverable exactly like any other.
+    expect(where.practitioner).toBeUndefined();
     // BOTH routes into state (b): scheduled, and the no-scheduler cohort that reached checkout.
     expect(JSON.stringify(where.OR)).toContain('SCHEDULED');
     expect(JSON.stringify(where.OR)).toContain('whopCheckoutSessionId');

@@ -2,7 +2,6 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
-import { listedWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
 import { CAPTURE_LIMITS, CAPTURE_ERRORS, type CaptureErrorCode } from '@/lib/booking-intent';
 import { startBookingIntent } from './actions';
@@ -29,13 +28,15 @@ export const metadata = { robots: { index: false, follow: false } };
 /**
  * Step 1 of the booking flow (§5) — the only UNCONDITIONAL step.
  *
- * Public and unauthenticated: the buyer is not a user. The practitioner must be publicly LISTED,
- * enforced with the same `listedWhere()` gate as the profile and the search index so a delisted
- * practitioner cannot keep taking leads through a bookmarked URL.
+ * Public and unauthenticated: the buyer is not a user. Resolved by slug ONLY — the listing gate
+ * deliberately does not apply here. "Unlisted" means absent from directory search, not switched
+ * off: trial-sweep's own warning email promises the profile "stays live at its direct link", and
+ * gating this page broke that promise by rendering Book buttons that 404'd. It also applied a
+ * completeness test (bio, city, specialty) to whether a practitioner may take a lead at all.
  */
 export default async function BookCapturePage({ params, searchParams }: Props) {
   const practitioner = await prisma.practitioner.findFirst({
-    where: { slug: params.slug, ...listedWhere() },
+    where: { slug: params.slug },
     select: { id: true, slug: true, displayName: true },
   });
   if (!practitioner) notFound();

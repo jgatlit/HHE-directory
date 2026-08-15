@@ -4,7 +4,6 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 import { rateLimit } from '@/lib/rate-limit';
-import { listedWhere } from '@/lib/practitioner-indexer';
 import { parseCapture, type CaptureErrorCode } from '@/lib/booking-intent';
 import { sendEmail } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
@@ -66,7 +65,7 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
   // so a delisted or trial-expired practitioner cannot keep taking leads through a bookmarked URL.
   // IDOR discipline: "no such practitioner" and "not bookable" are one response.
   const practitioner = await prisma.practitioner.findFirst({
-    where: { slug, ...listedWhere() },
+    where: { slug },
     select: {
       id: true,
       displayName: true,

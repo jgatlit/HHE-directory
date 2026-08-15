@@ -2,7 +2,6 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
-import { listedWhere } from '@/lib/practitioner-indexer';
 import { isClientScheduleSignal } from '@/lib/booking-flow';
 import { rateLimit } from '@/lib/rate-limit';
 import { headers } from 'next/headers';
@@ -11,8 +10,8 @@ import { headers } from 'next/headers';
  * Record that the buyer moved past step 2 (§8).
  *
  * PUBLIC AND UNAUTHENTICATED, like the rest of the flow — the buyer is not a user. The token in
- * the URL is the credential, so it is resolved scoped to the slug AND through the listing gate,
- * exactly as the page is.
+ * the URL is the credential, so it is resolved scoped to the slug, exactly as the page is. NOT
+ * through the listing gate — unlisted means "not in directory search", not "cannot be booked".
  *
  * ⚠️ THIS IS NOT A GUARD. D8: no external signal is a state-transition guard, and the buyer
  * advances the flow. This records what we OBSERVED — `SELF_REPORT` when they said so, `ASSUMED`
@@ -50,7 +49,7 @@ export async function recordScheduleSignal(
       // success while the intent stayed ABANDONED forever and was eligible to be swept again.
       // PAID is still excluded, which is the guarantee the filter existed for.
       status: { in: ['PENDING', 'ABANDONED'] },
-      practitioner: { slug, ...listedWhere() },
+      practitioner: { slug },
     },
     data: {
       status: 'SCHEDULED',

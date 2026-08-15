@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { sendEmail } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
-import { listedWhere } from '@/lib/practitioner-indexer';
 import { paymentsLive } from '@/lib/booking-flow';
 import {
   COLD_LEAD_MS,
@@ -90,14 +89,16 @@ export async function GET(request: Request): Promise<NextResponse> {
     // minted checkout session (§5's 1 → 3 subscription cohort, whose status never advances
     // because they never pass a scheduler).
     //
-    // The listing gate is applied HERE rather than in code because it is not a §10 rule: a
-    // delisted practitioner's flow page 404s, so a resume link would mail the buyer a dead end.
+    // NO listing gate. It used to be applied here on the reasoning that "a delisted
+    // practitioner's flow page 404s, so a resume link would mail the buyer a dead end" — true at
+    // the time, and a symptom of the gate on the flow rather than a reason for one here. Unlisted
+    // profiles stay bookable at their direct link, so the resume link resolves and the buyer is
+    // recoverable exactly as any other.
     const candidates = await prisma.bookingIntent.findMany({
       where: {
         paidAt: null,
         resumeEmailSentAt: null,
         createdAt: { lte: new Date(now.getTime() - RESUME_AFTER_CAPTURE_MS) },
-        practitioner: listedWhere(),
         OR: [{ status: 'SCHEDULED' }, { status: 'PENDING', whopCheckoutSessionId: { not: null } }],
       },
       select: {
@@ -211,7 +212,6 @@ export async function GET(request: Request): Promise<NextResponse> {
       where: {
         status: 'SCHEDULED',
         scheduledNoticeSentAt: null,
-        practitioner: listedWhere(),
       },
       select: {
         id: true,
