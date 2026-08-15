@@ -34,18 +34,29 @@ export default async function BookingFlowPage({ params }: Props) {
       status: true,
       practitioner: { select: { slug: true, displayName: true, whopPayoutsEnabled: true } },
       offering: {
-        select: { title: true, acceptsPayments: true, whopPlanId: true, purchaseUrl: true },
+        select: {
+          title: true,
+          archived: true,
+          acceptsPayments: true,
+          whopPlanId: true,
+          purchaseUrl: true,
+        },
       },
       bookingLink: { select: { url: true, label: true } },
     },
   });
   if (!intent) notFound();
 
-  const live = intent.offering
+  // An offering archived after capture must stop driving this flow — otherwise the buyer can pay
+  // for something the practitioner has retired (archiving and unpublishing are separate actions,
+  // so the Whop fields may still be populated). Both other entry points already scope on this.
+  const offering = intent.offering && !intent.offering.archived ? intent.offering : null;
+
+  const live = offering
     ? paymentsLive({
-        acceptsPayments: intent.offering.acceptsPayments,
+        acceptsPayments: offering.acceptsPayments,
         practitionerPayoutsEnabled: intent.practitioner.whopPayoutsEnabled,
-        whopPlanId: intent.offering.whopPlanId,
+        whopPlanId: offering.whopPlanId,
       })
     : false;
 
@@ -58,6 +69,10 @@ export default async function BookingFlowPage({ params }: Props) {
   // already paid invites a second booking of a session they hold, and §10's resume link points
   // at this exact URL.
   const settled = intent.status === 'PAID';
+  // Already past step 2. Rendering the scheduler again would hide the payment CTA behind a
+  // second trip through a calendar they have already used — and §10's resume email points here.
+  const alreadyScheduled = intent.status === 'SCHEDULED';
+  const checkoutUrl = live ? (offering?.purchaseUrl ?? null) : null;
 
   const advance = recordScheduleSignal.bind(null, params.slug, intent.id);
   const firstName = intent.name.split(' ')[0];
@@ -75,7 +90,7 @@ export default async function BookingFlowPage({ params }: Props) {
               your details.
             </h1>
             <p className="text-xs text-muted-foreground">
-              {intent.offering?.title ?? intent.bookingLink?.label ?? 'Booking'}
+              {offering?.title ?? intent.bookingLink?.label ?? 'Booking'}
             </p>
           </div>
         </div>
@@ -85,19 +100,36 @@ export default async function BookingFlowPage({ params }: Props) {
             This booking is already complete — nothing further to do. If you need to change it,
             contact {intent.practitioner.displayName} directly.
           </p>
-        ) : shape.showSchedule && intent.bookingLink?.url ? (
+        ) : shape.showSchedule && intent.bookingLink?.url && !alreadyScheduled ? (
           <SchedulerStep
             schedulerUrl={intent.bookingLink.url}
             practitionerName={intent.practitioner.displayName}
             onAdvance={advance}
-            hasCheckout={shape.showCheckout}
             // §17.3c replaces this with Whop's embedded checkout addressed by plan id (D11).
-            // Until then the existing hosted checkout is used rather than a dead end — it works
-            // today, and pretending otherwise would strand a buyer mid-purchase.
-            checkoutUrl={intent.offering?.purchaseUrl ?? null}
+            // Until then the existing hosted checkout is used rather than a dead end.
+            checkoutUrl={checkoutUrl}
           />
+        ) : checkoutUrl ? (
+          // Reached two ways, and BOTH were previously dead ends: §5's "subscription / no
+          // scheduling" row (1 → 3, no calendar at all), and a returning buyer whose intent is
+          // already SCHEDULED. `showCheckout` was computed and tested but only ever passed into
+          // the scheduler, so neither could ever reach payment.
+          <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+            <p className="text-xs text-muted-foreground">
+              {alreadyScheduled ? 'Last step — payment.' : 'No scheduling needed — just payment.'}
+            </p>
+            <a
+              href={checkoutUrl}
+              className="inline-flex h-11 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Continue to payment
+            </a>
+          </div>
+        ) : alreadyScheduled ? (
+          <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+            You&apos;re all set — {intent.practitioner.displayName} has your details and your time.
+          </p>
         ) : (
-          // No scheduler: §5's "subscription / no scheduling" and "informational only" rows.
           <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
             {intent.practitioner.displayName} will be in touch to arrange a time.
           </p>

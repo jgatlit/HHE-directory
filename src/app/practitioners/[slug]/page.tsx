@@ -5,6 +5,7 @@ import { CheckCircle2, Pencil } from 'lucide-react';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
+import { paymentsLive } from '@/lib/booking-flow';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { PractitionerHero } from '@/components/practitioners/PractitionerHero';
@@ -218,10 +219,19 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                               )}
                             </p>
                           )}
-                          {/* Only offerings published to Whop carry a purchaseUrl — practitioners can
-                              list an offering without online payment, and that stays unbuttoned rather
-                              than broken-looking. */}
-                          {o.purchaseUrl && (
+                          {/* ONE definition of "can this transact", shared with the booking flow.
+                              This used to gate on purchaseUrl alone while the flow used §9's
+                              three-way rule, so the same offering could be buyable here and
+                              unpayable there — and `createOfferingCheckout` can return a
+                              purchaseUrl with a null planId, which made that reachable rather
+                              than theoretical. An offering without online payment stays
+                              unbuttoned rather than broken-looking, as before. */}
+                          {paymentsLive({
+                            acceptsPayments: o.acceptsPayments,
+                            practitionerPayoutsEnabled: p.whopPayoutsEnabled,
+                            whopPlanId: o.whopPlanId,
+                          }) &&
+                            o.purchaseUrl && (
                             <a
                               href={o.purchaseUrl}
                               target="_blank"
@@ -230,7 +240,7 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                             >
                               {o.interval === 'ONE_TIME' ? 'Book' : 'Subscribe'}
                             </a>
-                          )}
+                            )}
                         </div>
                       </li>
                     ))}

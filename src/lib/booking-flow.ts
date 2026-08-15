@@ -28,10 +28,7 @@ export type FlowShape = {
  * recovered by §10, never by resequencing.
  */
 export function flowShape(input: FlowInputs): FlowShape {
-  return {
-    showSchedule: input.hasSchedulerUrl,
-    showCheckout: input.paymentsLive,
-  };
+  return { showSchedule: input.hasSchedulerUrl, showCheckout: input.paymentsLive };
 }
 
 /**
@@ -62,6 +59,17 @@ export function paymentsLive(input: {
  */
 export type ScheduleSignalValue = 'EVENT' | 'SELF_REPORT' | 'ASSUMED';
 
-export function isValidScheduleSignal(v: string): v is ScheduleSignalValue {
-  return v === 'EVENT' || v === 'SELF_REPORT' || v === 'ASSUMED';
+/**
+ * Signals a CLIENT may report. `EVENT` is deliberately absent.
+ *
+ * EVENT means "a provider told us", and the whole point of the enum is that the practitioner can
+ * see an unverified booking as unverified. The signal action is public and unauthenticated, and
+ * the client-side union erases at runtime, so accepting EVENT here would let anyone forge the
+ * high-confidence value and destroy the distinction. It stays reserved for a server-side
+ * provider webhook (§17.6, after the §16 validations).
+ */
+export type ClientScheduleSignal = 'SELF_REPORT' | 'ASSUMED';
+
+export function isClientScheduleSignal(v: string): v is ClientScheduleSignal {
+  return v === 'SELF_REPORT' || v === 'ASSUMED';
 }

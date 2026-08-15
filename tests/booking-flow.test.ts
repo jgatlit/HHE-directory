@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { flowShape, paymentsLive, isValidScheduleSignal } from '@/lib/booking-flow';
+import { flowShape, paymentsLive, isClientScheduleSignal } from '@/lib/booking-flow';
 
 describe('flowShape — §5 step map', () => {
   // The four rows of §5's table, asserted directly. Only CAPTURE is unconditional; both middle
@@ -74,18 +74,22 @@ describe('paymentsLive — §9, one bit of intent and two of capability', () => 
   });
 });
 
-describe('isValidScheduleSignal', () => {
-  it('accepts the three §8 values', () => {
-    for (const v of ['EVENT', 'SELF_REPORT', 'ASSUMED']) {
-      expect(isValidScheduleSignal(v)).toBe(true);
-    }
+describe('isClientScheduleSignal — EVENT is NOT client-reportable', () => {
+  it('accepts the two values a buyer can legitimately report', () => {
+    expect(isClientScheduleSignal('SELF_REPORT')).toBe(true);
+    expect(isClientScheduleSignal('ASSUMED')).toBe(true);
   });
 
-  // The signal arrives from an unauthenticated client, so an unknown value must be refused
-  // rather than written — a Prisma enum write of a bad value would throw inside the action.
-  it('refuses anything else, including lowercase and injection-ish input', () => {
-    for (const v of ['', 'event', 'PAID', 'DROP TABLE', 'ASSUMED ']) {
-      expect(isValidScheduleSignal(v)).toBe(false);
+  // EVENT means "a provider told us". The signal action is public and unauthenticated and the
+  // client-side TS union erases at runtime, so accepting EVENT here would let anyone forge the
+  // high-confidence value and destroy the very distinction §8 exists to preserve.
+  it('REFUSES EVENT — that value is reserved for a server-side provider signal', () => {
+    expect(isClientScheduleSignal('EVENT')).toBe(false);
+  });
+
+  it('refuses anything else, including casing variants and stray whitespace', () => {
+    for (const v of ['', 'self_report', 'PAID', 'DROP TABLE', 'ASSUMED ']) {
+      expect(isClientScheduleSignal(v)).toBe(false);
     }
   });
 });
