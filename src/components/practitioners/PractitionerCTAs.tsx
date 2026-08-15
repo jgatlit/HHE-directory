@@ -109,7 +109,6 @@ function HeroCta({
   const target = bookingLinkTarget(slug, link, linked);
   const label = ctaLabelFor(link, linked);
 
-
   if (target.kind === 'chooser') {
     return (
       <BookingChooser
@@ -154,7 +153,6 @@ function SecondaryCta({
 }) {
   const linked = offeringsForLink(offerings, link.id);
   const target = bookingLinkTarget(slug, link, linked);
-
 
   if (target.kind === 'chooser') {
     return (

@@ -68,7 +68,18 @@ export type ResumeCandidate = {
   practitionerPayoutsEnabled: boolean;
 };
 
-export type ResumeDecision = { send: true } | { send: false; reason: string };
+export type ResumeDecision =
+  | { send: true }
+  /**
+   * `permanent` — this intent will NEVER become sendable, so the caller should record it as
+   * resolved rather than reconsidering it on every run.
+   *
+   * Without that, a permanently-refused row matches the sweep's query forever. Combined with
+   * `orderBy createdAt asc` and a `take` cap, enough of them accumulating at the head of the
+   * ordering starves every genuinely mailable newer intent — the cap stops being a batch size and
+   * becomes a permanent ceiling. Only the two "too soon" refusals are transient.
+   */
+  | { send: false; reason: string; permanent: boolean };
 
 /**
  * Does this intent get §10's resume email?
@@ -83,32 +94,32 @@ export type ResumeDecision = { send: true } | { send: false; reason: string };
  * step exists at all.
  */
 export function resumeDecision(intent: ResumeCandidate, now: Date): ResumeDecision {
-  if (intent.paidAt !== null) return { send: false, reason: 'already-paid' };
+  if (intent.paidAt !== null) return { send: false, reason: 'already-paid', permanent: true };
   // EXACTLY ONCE. Resend's 24h key is a retry guard, not a lifetime one — without this a buyer
   // who decided not to buy is chased daily forever, because nothing else ever makes an unpaid
   // intent stop matching.
-  if (intent.resumeEmailSentAt !== null) return { send: false, reason: 'already-sent' };
+  if (intent.resumeEmailSentAt !== null) return { send: false, reason: 'already-sent', permanent: true };
 
   // Two routes into state (b), because §5 has two ways to reach a checkout. The scheduled route
   // is the common one; `reachedCheckout` covers the 1 → 3 cohort whose status never leaves
   // PENDING because there is no scheduler step to advance it.
   if (intent.status === 'SCHEDULED') {
-    if (!intent.scheduledAt) return { send: false, reason: 'no-scheduled-at' };
+    if (!intent.scheduledAt) return { send: false, reason: 'no-scheduled-at', permanent: true };
   } else if (intent.status === 'PENDING') {
-    if (!intent.reachedCheckout) return { send: false, reason: 'never-reached-checkout' };
+    if (!intent.reachedCheckout) return { send: false, reason: 'never-reached-checkout', permanent: false };
   } else {
-    return { send: false, reason: `status-${intent.status}` };
+    return { send: false, reason: `status-${intent.status}`, permanent: true };
   }
 
   const offering = intent.offering;
   // §10: "no abandoned-intent email where there is no checkout to abandon". With no offering
   // there is no step 3 at all — the intent is terminal at SCHEDULED and there is nothing to
   // resume, so mailing them would be inventing an obligation the buyer never had.
-  if (!offering) return { send: false, reason: 'no-offering' };
-  if (offering.archived) return { send: false, reason: 'offering-archived' };
+  if (!offering) return { send: false, reason: 'no-offering', permanent: true };
+  if (offering.archived) return { send: false, reason: 'offering-archived', permanent: true };
   // The free-consult path, named explicitly in §10. Also covers any zero-price offering, since a
   // checkout that collects nothing is not a checkout.
-  if (offering.isConsult || offering.priceUsdCents <= 0) return { send: false, reason: 'free' };
+  if (offering.isConsult || offering.priceUsdCents <= 0) return { send: false, reason: 'free', permanent: true };
   if (
     !paymentsLive({
       acceptsPayments: offering.acceptsPayments,
@@ -116,12 +127,12 @@ export function resumeDecision(intent: ResumeCandidate, now: Date): ResumeDecisi
       whopPlanId: offering.whopPlanId,
     })
   ) {
-    return { send: false, reason: 'payments-not-live' };
+    return { send: false, reason: 'payments-not-live', permanent: true };
   }
 
   const t = now.getTime();
   if (t - intent.createdAt.getTime() < RESUME_AFTER_CAPTURE_MS) {
-    return { send: false, reason: 'too-soon-since-capture' };
+    return { send: false, reason: 'too-soon-since-capture', permanent: false };
   }
   // Only meaningful on the scheduled route. The 1 → 3 cohort has no scheduling moment, so the
   // capture anchor is the only timer that applies to them.
@@ -129,7 +140,7 @@ export function resumeDecision(intent: ResumeCandidate, now: Date): ResumeDecisi
     intent.scheduledAt &&
     t - intent.scheduledAt.getTime() < RESUME_FLOOR_AFTER_SCHEDULE_MS
   ) {
-    return { send: false, reason: 'too-soon-since-schedule' };
+    return { send: false, reason: 'too-soon-since-schedule', permanent: false };
   }
   return { send: true };
 }

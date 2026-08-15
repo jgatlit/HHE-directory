@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { bookableWhere } from '@/lib/practitioner-indexer';
 import { sendEmail } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
 import { paymentsLive } from '@/lib/booking-flow';
@@ -99,6 +100,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         paidAt: null,
         resumeEmailSentAt: null,
         createdAt: { lte: new Date(now.getTime() - RESUME_AFTER_CAPTURE_MS) },
+        practitioner: bookableWhere(),
         OR: [{ status: 'SCHEDULED' }, { status: 'PENDING', whopCheckoutSessionId: { not: null } }],
       },
       select: {
@@ -129,10 +131,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     });
 
     resume.matched = candidates.length;
-    // A silent cap reads as "covered everything" when it did not. Because every send now sets
-    // `resumeEmailSentAt`, the taken rows genuinely leave the candidate set and the remainder IS
-    // reached on later runs — which was not true before the marker existed, when the same oldest
-    // N were re-selected forever and row N+1 was never reached at all.
+    // A silent cap reads as "covered everything" when it did not. Every row taken here leaves the
+    // candidate set — sent ones and permanently-refused ones alike both stamp `resumeEmailSentAt`
+    // — so the remainder IS reached on later runs. That is only true because refusals are
+    // recorded too: recording sends alone would still let permanently-unsendable rows pile up at
+    // the head of the ordering and starve everything behind them.
     if (candidates.length === CANDIDATE_TAKE) {
       console.warn(
         `[booking-sweep] candidate cap hit (${CANDIDATE_TAKE}); the remainder is picked up by subsequent runs as these are marked sent`,
@@ -157,6 +160,22 @@ export async function GET(request: Request): Promise<NextResponse> {
       if (!decision.send) {
         resume.skipped += 1;
         skipReasons[decision.reason] = (skipReasons[decision.reason] ?? 0) + 1;
+        // A PERMANENT refusal is recorded so the row stops matching. Skipping without recording
+        // left it in the candidate set forever, and with `orderBy createdAt asc` + a take cap,
+        // enough of those at the head of the ordering starve every mailable newer intent — the
+        // cap silently stops being a batch size and becomes a ceiling. The column means "no
+        // resume email is owed", which covers both sent and never-sendable.
+        if (decision.permanent) {
+          await prisma.bookingIntent
+            .update({ where: { id: intent.id }, data: { resumeEmailSentAt: new Date() } })
+            .catch((err) => {
+              console.error('[booking-sweep] could not record permanent skip', {
+                intentId: intent.id,
+                reason: decision.reason,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
+        }
         continue;
       }
 
@@ -212,6 +231,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       where: {
         status: 'SCHEDULED',
         scheduledNoticeSentAt: null,
+        practitioner: bookableWhere(),
       },
       select: {
         id: true,

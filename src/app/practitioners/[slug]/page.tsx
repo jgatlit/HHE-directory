@@ -22,9 +22,6 @@ async function loadPractitioner(slug: string) {
       city: true,
       specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
-      // The PROFILE OWNER's role — isListed() exempts admins from the billing half of the gate,
-      // and it is the owner's role that matters, never the viewer's.
-      user: { select: { role: true } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
       // No `active` filter: that column is dead and was a trap — it reads like a hidden/visible
       // toggle and is not one, and because it filtered HERE it would have removed an Offering
@@ -169,8 +166,6 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 // gated by bookingLinkId, never by visibility (§4).
                 offerings={ctaOfferings}
                 primaryBookingLinkId={p.primaryBookingLinkId}
-                // The SAME gate /book enforces. This page has no listing gate of its own, so
-                // without this a partially-onboarded practitioner's every CTA would 404.
                 websiteUrl={p.websiteUrl}
               />
             </aside>

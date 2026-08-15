@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
+import { bookableWhere } from '@/lib/practitioner-indexer';
 import { isClientScheduleSignal } from '@/lib/booking-flow';
 import { rateLimit } from '@/lib/rate-limit';
 import { headers } from 'next/headers';
@@ -38,7 +39,7 @@ export async function recordScheduleSignal(
   const limited = await rateLimit('booking-signal', ip, { limit: 60, windowSeconds: 600 });
   if (!limited.success) return { ok: false };
 
-  // Scoped by slug + listing gate, and only ever advances a PENDING intent. A SCHEDULED intent
+  // Scoped by slug + bookableWhere(), and only ever advances a PENDING intent. A SCHEDULED intent
   // re-submitting is a no-op rather than an error — the buyer may legitimately click twice, and
   // a PAID intent must never be dragged backwards by a stale tab.
   const updated = await prisma.bookingIntent.updateMany({
@@ -49,7 +50,7 @@ export async function recordScheduleSignal(
       // success while the intent stayed ABANDONED forever and was eligible to be swept again.
       // PAID is still excluded, which is the guarantee the filter existed for.
       status: { in: ['PENDING', 'ABANDONED'] },
-      practitioner: { slug },
+      practitioner: { slug, ...bookableWhere() },
     },
     data: {
       status: 'SCHEDULED',

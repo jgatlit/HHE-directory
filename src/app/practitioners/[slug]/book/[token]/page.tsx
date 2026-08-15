@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Check } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
+import { bookableWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
 import { flowShape, paymentsLive } from '@/lib/booking-flow';
 import { SchedulerStep } from '@/components/booking/SchedulerStep';
@@ -28,7 +29,7 @@ export const metadata = { robots: { index: false, follow: false } };
  * good enough for that job.
  */
 export default async function BookingFlowPage({ params }: Props) {
-  // Scoped by slug, and DELIBERATELY NOT by the listing gate.
+  // Scoped by slug and by `bookableWhere()` — deliberately NOT by the listing gate.
   //
   // "Unlisted" means absent from directory search — it does not mean the profile is switched off.
   // trial-sweep's own warning email promises exactly this: "your profile stays live at its direct
@@ -41,7 +42,7 @@ export default async function BookingFlowPage({ params }: Props) {
   // IDOR discipline is unchanged: the slug scoping stays, so a token that does not belong to this
   // practitioner still produces one identical 404.
   const intent = await prisma.bookingIntent.findFirst({
-    where: { publicToken: params.token, practitioner: { slug: params.slug } },
+    where: { publicToken: params.token, practitioner: { slug: params.slug, ...bookableWhere() } },
     select: {
       id: true,
       publicToken: true,

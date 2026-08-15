@@ -168,11 +168,10 @@ describe('who gets mailed', () => {
     // dropping it here silently widens who is considered.
     const createdAt = where.createdAt as { lte: Date };
     expect(createdAt.lte.getTime()).toBeLessThanOrEqual(Date.now() - 15 * 60 * 1000);
-    // NO listing gate. It was applied here because a delisted practitioner's flow page used to
-    // 404, which made a resume link a dead end — a symptom of the gate on the flow, not a reason
-    // for one here. Unlisted profiles stay bookable at their direct link, so the link resolves
-    // and that buyer is recoverable exactly like any other.
-    expect(where.practitioner).toBeUndefined();
+    // bookableWhere(), NOT listedWhere(): an unlisted practitioner's resume link resolves, so
+    // that buyer is recoverable like any other — but a RETIRED row is still refused, because
+    // mailing a resume link for one points the buyer at a profile nobody is reading.
+    expect(JSON.stringify(where.practitioner)).toContain('trialEndsAt');
     // BOTH routes into state (b): scheduled, and the no-scheduler cohort that reached checkout.
     expect(JSON.stringify(where.OR)).toContain('SCHEDULED');
     expect(JSON.stringify(where.OR)).toContain('whopCheckoutSessionId');

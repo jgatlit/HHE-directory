@@ -544,7 +544,10 @@ model BookingIntent {
   scheduleSignal ScheduleSignal?
   scheduledAt    DateTime?
 
-  /// §10's resume email — sent EXACTLY ONCE, which is what these columns buy.
+  /// §10's resume email — set when NO RESUME EMAIL IS OWED, which covers two cases: one was
+  /// sent, or the intent can never be owed one (free consult, archived offering, payments never
+  /// live). Recording the second case is what stops permanently-unsendable rows accumulating at
+  /// the head of the sweep's `createdAt asc` ordering and starving everything behind the cap.
   ///
   /// Resend's `idempotencyKey` de-duplicates for 24 HOURS, and that is all. Nothing else ever
   /// removes an unpaid intent from the sweep's candidate set — the cold sweep deliberately never

@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { prisma } from '@/lib/prisma';
+import { bookableWhere } from '@/lib/practitioner-indexer';
 import { rateLimit } from '@/lib/rate-limit';
 import { parseCapture, type CaptureErrorCode } from '@/lib/booking-intent';
 import { sendEmail } from '@/lib/email';
@@ -61,11 +62,13 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
   const parsed = parseCapture(raw);
   if (!parsed.ok) bounce(parsed.code);
 
-  // The practitioner must be publicly LISTED — the same gate as the profile and the search index,
-  // so a delisted or trial-expired practitioner cannot keep taking leads through a bookmarked URL.
+  // Gated by `bookableWhere()`, NOT `listedWhere()`. Unlisted practitioners stay bookable at
+  // their direct link — that is what trial-sweep's warning email promises them — so the only
+  // refusal here is a RETIRED row, whose owner mailbox is typically dead and whose leads would
+  // therefore be captured, acknowledged to the buyer, and read by nobody.
   // IDOR discipline: "no such practitioner" and "not bookable" are one response.
   const practitioner = await prisma.practitioner.findFirst({
-    where: { slug },
+    where: { slug, ...bookableWhere() },
     select: {
       id: true,
       displayName: true,

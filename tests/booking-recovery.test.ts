@@ -60,7 +60,7 @@ describe('resumeDecision — who gets §10’s resume email', () => {
     ['an offering archived after capture', { offering: { ...candidate().offering!, archived: true } }, 'offering-archived'],
     ['no offering at all', { offering: null }, 'no-offering'],
   ])('never emails %s', (_label, over, reason) => {
-    expect(resumeDecision(candidate(over as Partial<ResumeCandidate>), NOW)).toEqual({
+    expect(resumeDecision(candidate(over as Partial<ResumeCandidate>), NOW)).toMatchObject({
       send: false,
       reason,
     });
@@ -73,14 +73,14 @@ describe('resumeDecision — who gets §10’s resume email', () => {
       candidate({ createdAt: minutesAgo(14), scheduledAt: minutesAgo(13) }),
       NOW,
     );
-    expect(r).toEqual({ send: false, reason: 'too-soon-since-capture' });
+    expect(r).toMatchObject({ send: false, reason: 'too-soon-since-capture' });
   });
 
   // §10's implementation floor. Without it, capture at 0 + schedule at 14 = "you didn't finish"
   // sixty seconds after they finished.
   it('does not email someone who scheduled a moment ago, even if capture was long ago', () => {
     const r = resumeDecision(candidate({ createdAt: minutesAgo(60), scheduledAt: minutesAgo(1) }), NOW);
-    expect(r).toEqual({ send: false, reason: 'too-soon-since-schedule' });
+    expect(r).toMatchObject({ send: false, reason: 'too-soon-since-schedule' });
   });
 
   it('emails once BOTH the capture interval and the schedule floor have elapsed', () => {
@@ -120,7 +120,7 @@ describe('resumeDecision — who gets §10’s resume email', () => {
       candidate({ status: 'PENDING', scheduledAt: null, reachedCheckout: false }),
       NOW,
     );
-    expect(r).toEqual({ send: false, reason: 'never-reached-checkout' });
+    expect(r).toMatchObject({ send: false, reason: 'never-reached-checkout' });
   });
 
   // Resend's key de-duplicates for 24h and nothing else ever removes an unpaid intent from the
@@ -128,20 +128,17 @@ describe('resumeDecision — who gets §10’s resume email', () => {
   // forever, from a sending domain whose deliverability was hard-won.
   it('never sends a second resume email, however long the intent stays unpaid', () => {
     const r = resumeDecision(candidate({ resumeEmailSentAt: minutesAgo(60 * 24 * 30) }), NOW);
-    expect(r).toEqual({ send: false, reason: 'already-sent' });
+    expect(r).toMatchObject({ send: false, reason: 'already-sent' });
   });
 
   it('never emails an intent the webhook already marked paid, whatever its status says', () => {
     // status and paidAt can disagree for a moment; paidAt is the authority.
     const r = resumeDecision(candidate({ paidAt: NOW }), NOW);
-    expect(r).toEqual({ send: false, reason: 'already-paid' });
+    expect(r).toMatchObject({ send: false, reason: 'already-paid' });
   });
 
   it('refuses rather than throwing when SCHEDULED has no scheduledAt', () => {
-    expect(resumeDecision(candidate({ scheduledAt: null }), NOW)).toEqual({
-      send: false,
-      reason: 'no-scheduled-at',
-    });
+    expect(resumeDecision(candidate({ scheduledAt: null }), NOW)).toMatchObject({ send: false, reason: 'no-scheduled-at', });
   });
 });
 
@@ -256,5 +253,33 @@ describe('scheduledNoticeCopy — §8’s visible uncertainty', () => {
     });
     expect(c.html).not.toContain('<script>');
     expect(c.html).toContain('&lt;script&gt;');
+  });
+});
+
+/**
+ * Permanence drives whether the sweep RECORDS a refusal. Getting it wrong is silent in both
+ * directions: mark a transient refusal permanent and that buyer is never recovered; leave a
+ * permanent one unmarked and it matches forever, head-of-line blocking the capped query.
+ */
+describe('resumeDecision — refusal permanence', () => {
+  it.each([
+    ['free', { offering: { ...candidate().offering!, isConsult: true } }],
+    ['offering-archived', { offering: { ...candidate().offering!, archived: true } }],
+    ['no-offering', { offering: null }],
+    ['payments-not-live', { practitionerPayoutsEnabled: false }],
+    ['already-paid', { paidAt: NOW }],
+  ])('marks %s PERMANENT, so the row stops matching', (_r, over) => {
+    const d = resumeDecision(candidate(over as Partial<ResumeCandidate>), NOW);
+    expect(d.send).toBe(false);
+    expect((d as { permanent: boolean }).permanent).toBe(true);
+  });
+
+  it.each([
+    ['too-soon-since-capture', { createdAt: minutesAgo(2), scheduledAt: minutesAgo(1) }],
+    ['too-soon-since-schedule', { scheduledAt: minutesAgo(1) }],
+  ])('marks %s TRANSIENT — recording it would silently drop a recoverable buyer', (_r, over) => {
+    const d = resumeDecision(candidate(over as Partial<ResumeCandidate>), NOW);
+    expect(d.send).toBe(false);
+    expect((d as { permanent: boolean }).permanent).toBe(false);
   });
 });
