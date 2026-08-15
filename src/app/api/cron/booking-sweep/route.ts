@@ -1,0 +1,308 @@
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { sendEmail } from '@/lib/email';
+import { SITE_URL } from '@/lib/site';
+import { listedWhere } from '@/lib/practitioner-indexer';
+import { paymentsLive } from '@/lib/booking-flow';
+import {
+  COLD_LEAD_MS,
+  RESUME_AFTER_CAPTURE_MS,
+  resumeCopy,
+  resumeDecision,
+  scheduledNoticeCopy,
+} from '@/lib/booking-recovery';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+/**
+ * §10 abandonment sweep. Wired as a Vercel Cron in vercel.json, every 15 minutes.
+ *
+ * Three jobs:
+ *
+ *   1. RESUME  — a buyer who reached a checkout and did not pay gets one email with a resume link.
+ *   2. NOTIFY  — the practitioner is told someone picked a time.
+ *   3. COLD    — a PENDING intent that never reached a checkout is relabelled ABANDONED. NO buyer
+ *                email: there is nothing to resume, so mailing them would be marketing.
+ *
+ * Like trial-sweep, this exists because the thing it reacts to IS NOT AN EVENT. Nobody abandons a
+ * checkout; they simply stop, and no request ever arrives to notice it. Without a sweep the
+ * scheduled-but-unpaid state is recorded perfectly and acted on never — which is exactly what the
+ * first real booking through this flow did.
+ *
+ * WHY THE PRACTITIONER NOTICE LIVES HERE and not in the server action that performs the
+ * transition: sending it inline put a Resend round-trip on the buyer's critical path at the
+ * highest-drop-off moment in the flow, which contradicts D8 and the explicit warning in
+ * src/lib/email.ts. It also had no burst bound, so it bypassed the one the capture path built —
+ * a script could drive unbounded practitioner emails by capturing and then advancing each intent.
+ * Moving it here costs at most 15 minutes of latency and removes both problems: the cron's own
+ * schedule is the rate limit, and `scheduledNoticeSentAt` makes it exactly-once.
+ *
+ * EXACTLY-ONCE is the send markers' job, not Resend's. `idempotencyKey` de-duplicates for 24
+ * HOURS only, and nothing else ever removes an unpaid intent from the candidate set — so keys
+ * alone meant "one email per day forever" for any buyer who simply decided not to buy.
+ */
+
+/** Cheap pre-filter only. The real decision is `resumeDecision()`, which owns the §10 rules. */
+const CANDIDATE_TAKE = 200;
+
+type Summary = { matched: number; sent: number; skipped: number; failed: number };
+
+export async function GET(request: Request): Promise<NextResponse> {
+  const secret = process.env.CRON_SECRET;
+  // FAIL CLOSED in production. The "open when unset" shape was inherited from
+  // /api/health/search, which is READ-ONLY — this route is not. An unauthenticated GET here
+  // relabels rows in bulk and sends buyer-facing email from the verified domain, so a missing or
+  // mistyped CRON_SECRET on any deployed environment must not silently expose that.
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[booking-sweep] CRON_SECRET is not set; refusing to run in production');
+      return NextResponse.json({ error: 'CRON_SECRET is not configured' }, { status: 503 });
+    }
+  } else if (request.headers.get('authorization') !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const now = new Date();
+  const emailConfigured = !!process.env.RESEND_API_KEY;
+  const resume: Summary = { matched: 0, sent: 0, skipped: 0, failed: 0 };
+  const notify: Summary = { matched: 0, sent: 0, skipped: 0, failed: 0 };
+  const skipReasons: Record<string, number> = {};
+  const failures: { job: string; intentId: string; error: string }[] = [];
+
+  if (!emailConfigured) {
+    // Loud, but NOT fatal to the whole run. The cold relabel below sends nothing at all, and
+    // freezing a state transition because an email key is missing would stall the lead queue
+    // indefinitely over a problem it does not depend on.
+    console.error('[booking-sweep] RESEND_API_KEY is not set; email jobs skipped this run');
+  }
+
+  if (emailConfigured) {
+    // Narrow on what an index can serve and leave every §10 rule to resumeDecision(). Restating
+    // payments_live as a Prisma `where` would create a second definition of the one condition
+    // that decides whether a checkout step exists at all.
+    //
+    // Both routes into state (b) are selected: SCHEDULED (the common path) and PENDING with a
+    // minted checkout session (§5's 1 → 3 subscription cohort, whose status never advances
+    // because they never pass a scheduler).
+    //
+    // The listing gate is applied HERE rather than in code because it is not a §10 rule: a
+    // delisted practitioner's flow page 404s, so a resume link would mail the buyer a dead end.
+    const candidates = await prisma.bookingIntent.findMany({
+      where: {
+        paidAt: null,
+        resumeEmailSentAt: null,
+        createdAt: { lte: new Date(now.getTime() - RESUME_AFTER_CAPTURE_MS) },
+        practitioner: listedWhere(),
+        OR: [{ status: 'SCHEDULED' }, { status: 'PENDING', whopCheckoutSessionId: { not: null } }],
+      },
+      select: {
+        id: true,
+        publicToken: true,
+        name: true,
+        email: true,
+        status: true,
+        paidAt: true,
+        createdAt: true,
+        scheduledAt: true,
+        resumeEmailSentAt: true,
+        whopCheckoutSessionId: true,
+        practitioner: { select: { slug: true, displayName: true, whopPayoutsEnabled: true } },
+        offering: {
+          select: {
+            title: true,
+            archived: true,
+            acceptsPayments: true,
+            whopPlanId: true,
+            priceUsdCents: true,
+            isConsult: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: CANDIDATE_TAKE,
+    });
+
+    resume.matched = candidates.length;
+    // A silent cap reads as "covered everything" when it did not. Because every send now sets
+    // `resumeEmailSentAt`, the taken rows genuinely leave the candidate set and the remainder IS
+    // reached on later runs — which was not true before the marker existed, when the same oldest
+    // N were re-selected forever and row N+1 was never reached at all.
+    if (candidates.length === CANDIDATE_TAKE) {
+      console.warn(
+        `[booking-sweep] candidate cap hit (${CANDIDATE_TAKE}); the remainder is picked up by subsequent runs as these are marked sent`,
+      );
+    }
+
+    for (const intent of candidates) {
+      const decision = resumeDecision(
+        {
+          status: intent.status,
+          paidAt: intent.paidAt,
+          createdAt: intent.createdAt,
+          scheduledAt: intent.scheduledAt,
+          resumeEmailSentAt: intent.resumeEmailSentAt,
+          reachedCheckout: intent.whopCheckoutSessionId !== null,
+          offering: intent.offering,
+          practitionerPayoutsEnabled: intent.practitioner.whopPayoutsEnabled,
+        },
+        now,
+      );
+
+      if (!decision.send) {
+        resume.skipped += 1;
+        skipReasons[decision.reason] = (skipReasons[decision.reason] ?? 0) + 1;
+        continue;
+      }
+
+      // SITE_URL, not a request host: a cron has no buyer request to derive an origin from, and
+      // this URL is going into an inbox where it must point at production.
+      const resumeUrl = `${SITE_URL}/practitioners/${encodeURIComponent(
+        intent.practitioner.slug,
+      )}/book/${intent.publicToken}`;
+
+      const { subject, text, html } = resumeCopy({
+        firstName: intent.name.split(' ')[0] ?? '',
+        practitionerName: intent.practitioner.displayName,
+        // resumeDecision() refuses every intent with no offering, so this fallback is unreachable
+        // — it exists so the type narrows without an assertion.
+        offeringTitle: intent.offering?.title ?? 'your booking',
+        resumeUrl,
+      });
+
+      try {
+        await sendEmail({
+          to: intent.email,
+          subject,
+          text,
+          html,
+          idempotencyKey: `booking-resume/${intent.id}`,
+          tags: [{ name: 'feature', value: 'booking-sweep' }],
+        });
+        // Marked only AFTER a confirmed send. sendEmail throws rather than reporting a non-send
+        // as success, so a failure leaves the marker null and the intent is retried next run —
+        // which is the correct direction to fail for a recovery email.
+        await prisma.bookingIntent.update({
+          where: { id: intent.id },
+          data: { resumeEmailSentAt: new Date() },
+        });
+        resume.sent += 1;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        resume.failed += 1;
+        failures.push({ job: 'resume', intentId: intent.id, error: message });
+        console.error('[booking-sweep] RESUME SEND FAILED', JSON.stringify({ intentId: intent.id, error: message }));
+      }
+    }
+
+    // ── Practitioner notices ──────────────────────────────────────────────────────────────────
+    //
+    // NOT gated on `notifyLeadsImmediately`. §11's toggle chooses between "tell me about leads
+    // immediately" and "tell me on checkout instead" — but the checkout-time notification it
+    // promises DOES NOT EXIST anywhere in this codebase, so honouring the gate here would mean a
+    // practitioner who turned lead emails off is never told that a stranger is on their calendar,
+    // with no substitute at all. A booked slot is also not a lead: §10 treats it as a service
+    // obligation with a client waiting, which is exactly why the dashboard row is ungated too.
+    const scheduled = await prisma.bookingIntent.findMany({
+      where: {
+        status: 'SCHEDULED',
+        scheduledNoticeSentAt: null,
+        practitioner: listedWhere(),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        scheduleSignal: true,
+        practitioner: {
+          select: { slug: true, whopPayoutsEnabled: true, user: { select: { email: true } } },
+        },
+        offering: {
+          select: { title: true, archived: true, priceUsdCents: true, acceptsPayments: true, whopPlanId: true },
+        },
+      },
+      orderBy: { scheduledAt: 'asc' },
+      take: CANDIDATE_TAKE,
+    });
+
+    notify.matched = scheduled.length;
+    for (const intent of scheduled) {
+      const to = intent.practitioner.user.email;
+      if (!to) {
+        notify.skipped += 1;
+        continue;
+      }
+      // An offering archived after capture owes nothing: the flow page stops rendering its
+      // checkout entirely, so telling the practitioner to chase a payment would send them after
+      // money the buyer has no way to give them.
+      const live =
+        intent.offering && !intent.offering.archived
+          ? paymentsLive({
+              acceptsPayments: intent.offering.acceptsPayments,
+              practitionerPayoutsEnabled: intent.practitioner.whopPayoutsEnabled,
+              whopPlanId: intent.offering.whopPlanId,
+            })
+          : false;
+
+      const { subject, text, html } = scheduledNoticeCopy({
+        buyerName: intent.name,
+        buyerEmail: intent.email,
+        buyerPhone: intent.phone,
+        offeringTitle: intent.offering?.title ?? null,
+        signal: intent.scheduleSignal ?? 'ASSUMED',
+        profileUrl: `${SITE_URL}/practitioners/${encodeURIComponent(intent.practitioner.slug)}/edit`,
+        awaitingPayment: live && (intent.offering?.priceUsdCents ?? 0) > 0,
+      });
+
+      try {
+        await sendEmail({
+          to,
+          subject,
+          text,
+          html,
+          idempotencyKey: `booking-scheduled/${intent.id}`,
+          tags: [{ name: 'feature', value: 'booking-scheduled' }],
+        });
+        await prisma.bookingIntent.update({
+          where: { id: intent.id },
+          data: { scheduledNoticeSentAt: new Date() },
+        });
+        notify.sent += 1;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        notify.failed += 1;
+        failures.push({ job: 'notify', intentId: intent.id, error: message });
+        console.error('[booking-sweep] NOTICE SEND FAILED', JSON.stringify({ intentId: intent.id, error: message }));
+      }
+    }
+  }
+
+  // ── State (a): captured, never reached a checkout, now cold ────────────────────────────────
+  //
+  // Runs whether or not email is configured — it sends nothing.
+  //
+  // `whopCheckoutSessionId: null` is load-bearing, not incidental: a PENDING intent WITH a
+  // session is §5's 1 → 3 cohort, who did reach a real checkout and are handled by the resume job
+  // above. Sweeping them in here would file a recoverable buyer under "abandoned" while the
+  // comment claimed they never reached a checkout.
+  //
+  // SCHEDULED intents are excluded however old they get: §10 calls that state "a follow-up, not a
+  // loss", and relabelling it would bury the one thing this section exists to rescue. See
+  // COLD_LEAD_MS for why this transition is a judgment call at all.
+  const cold = await prisma.bookingIntent.updateMany({
+    where: {
+      status: 'PENDING',
+      paidAt: null,
+      whopCheckoutSessionId: null,
+      createdAt: { lte: new Date(now.getTime() - COLD_LEAD_MS) },
+    },
+    data: { status: 'ABANDONED' },
+  });
+
+  const ok = failures.length === 0 && emailConfigured;
+  return NextResponse.json(
+    { ok, emailConfigured, resume, notify, skipReasons, abandoned: cold.count, failures },
+    { status: failures.length === 0 ? 200 : 207 },
+  );
+}

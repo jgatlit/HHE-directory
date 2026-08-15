@@ -537,6 +537,21 @@ model BookingIntent {
   scheduleSignal ScheduleSignal?
   scheduledAt    DateTime?
 
+  /// §10's resume email — sent EXACTLY ONCE, which is what these columns buy.
+  ///
+  /// Resend's `idempotencyKey` de-duplicates for 24 HOURS, and that is all. Nothing else ever
+  /// removes an unpaid intent from the sweep's candidate set — the cold sweep deliberately never
+  /// touches SCHEDULED, and `paidAt` stays null forever if the buyer simply decided not to buy —
+  /// so a 24h window alone means "one email per day, indefinitely", not "one email". A buyer who
+  /// changed their mind would be chased daily for the life of the row, on a sending domain whose
+  /// deliverability was hard-won.
+  ///
+  /// It also fixes a starvation bug: with a `take` cap and no sent-marker, the oldest N eligible
+  /// intents are re-selected on every run and intent N+1 is never reached at all.
+  resumeEmailSentAt     DateTime?
+  /// Same contract for the practitioner's "someone booked a time" notice.
+  scheduledNoticeSentAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

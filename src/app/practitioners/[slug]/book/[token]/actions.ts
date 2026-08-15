@@ -62,6 +62,18 @@ export async function recordScheduleSignal(
   });
 
   if (updated.count > 0) revalidatePath(`/practitioners/${slug}/book/${token}`);
+
+  // NO EMAIL IS SENT FROM HERE. The practitioner's "someone booked a time" notice is the booking
+  // sweep's job (/api/cron/booking-sweep), for two reasons that both bite at this exact point in
+  // the flow:
+  //
+  //   1. D8 and src/lib/email.ts both say do not put a network send on the buyer's path. This
+  //      action runs at the highest-drop-off moment there is — the buyer is waiting for checkout
+  //      to appear — and a slow Resend call would add dead seconds to it.
+  //   2. This endpoint is public and unauthenticated with no per-practitioner burst bound. The
+  //      sibling capture action caps lead emails at 15 per practitioner per 10 minutes precisely
+  //      so an inbox cannot be flooded; sending from here would bypass that guard using the step
+  //      immediately after it.
   // `count === 0` means already advanced, or not ours. Both report ok: the buyer's journey is
   // not blocked by our bookkeeping, which is the whole point of D8.
   return { ok: true };
