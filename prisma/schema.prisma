@@ -55,6 +55,55 @@ enum ProductInterval {
   ANNUAL
 }
 
+// ── Booking & checkout (canonical spec v2, vault art_c688ea69482744d19c89) ────────────────────
+//
+// These ARE enums, unlike whopPayoutStatus which is deliberately a String. The distinction is
+// ownership: whopPayoutStatus holds values Whop sends us, and an unrecognised value would make
+// the write throw inside a webhook handler that Whop retries only 3× over ~70s. Every enum below
+// holds values WE derive, so the set cannot surprise us at runtime.
+
+/// Derived from the booking URL's hostname on paste (§6). Never practitioner-supplied.
+enum BookingProvider {
+  CALENDLY
+  CAL_COM
+  ACUITY
+  SAVVYCAL
+  OTHER
+}
+
+/// D3 — general-purpose, NOT free-consult-specific. Gates the profile GRID only; the Booking Link
+/// chooser lists every Offering pointing at the link REGARDLESS of this value (§4). That is what
+/// makes an unlisted free consult reachable there and nowhere else, and it is why one boolean
+/// could never express both layers.
+enum ListingVisibility {
+  LISTED
+  LINK_ONLY
+}
+
+/// Diagnostic, not a vanity metric — it proxies buyer intent at entry. BOOKING_LINK is a buyer
+/// decided to ACT; OFFERING_CARD is one still deciding.
+enum BookingEntryPoint {
+  BOOKING_LINK
+  OFFERING_CARD
+}
+
+enum BookingIntentStatus {
+  PENDING
+  SCHEDULED
+  PAID
+  ABANDONED
+}
+
+/// §8 — how much we trust that scheduling actually happened. Surfaced to the practitioner so an
+/// unverified booking is visibly unverified. ASSUMED means the buyer advanced past step 2 with
+/// neither a provider event nor a self-report, which is explicitly allowed: no external signal is
+/// a state-transition guard (D8).
+enum ScheduleSignal {
+  EVENT
+  SELF_REPORT
+  ASSUMED
+}
+
 // Layer X — practitioner platform-subscription lifecycle (they pay us to be listed)
 enum SubscriptionStatus {
   NONE
@@ -141,20 +190,42 @@ model Practitioner {
   // migration on the shared Neon DB; data copied into BookingLink. Drop in a follow-up.
   bookingUrl   String?
 
+  /// §14.3 — designates the hero CTA's link. When a practitioner runs purpose-built links and
+  /// designates NONE, the hero CTA is suppressed and Offering cards lead: in that topology the
+  /// cards ARE the correct entry point, and a hero pointing at one arbitrary calendar would
+  /// misrepresent the practice. `@unique` because Prisma models this side of a 1-1; it also
+  /// correctly forbids one link being primary for two practitioners.
+  primaryBookingLinkId String?      @unique
+  primaryBookingLink   BookingLink? @relation("PrimaryBookingLink", fields: [primaryBookingLinkId], references: [id], onDelete: SetNull)
+
+  /// §11 — per-practitioner global, NOT per-Offering. "Send leads immediately" (default) vs
+  /// "send leads upon checkout". Suppresses EMAILS ONLY: the scheduled-but-unpaid dashboard view
+  /// is a service obligation with a client waiting, and must never be switchable off by a
+  /// lead-email preference.
+  notifyLeadsImmediately Boolean @default(true)
+
+  /// 🚨 SECURITY — NOTIFICATION SENDERS ONLY. Additional recipients for lead/booking notices.
+  /// This column must NEVER be read by the magic-link or invitation senders: those emails carry
+  /// authentication material, so CC-ing an attacker-supplied address is a direct account-takeover
+  /// vector. Any new sender that reads this field needs an explicit review of what it transmits.
+  notificationCcEmails String[] @default([])
+
+  bookingIntents BookingIntent[]
+
   // Wedge 2C — Whop Connected Account (Layer Y: patient → practitioner)
   // whopCompanyId is the practitioner's connected company under WHOP_PARENT_COMPANY_ID.
   // KYC + payouts are handled by Whop's hosted flows; see docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md.
-  whopCompanyId      String?       @unique
+  whopCompanyId         String?       @unique
   /// DEPRECATED — 4-state enum cannot represent Whop's 9 payout statuses. Superseded by
   /// whopPayoutStatus + whopPayoutsEnabled. Retained one release per expand/contract; the
   /// migration applies while the PREVIOUS deploy still serves traffic, so this must not vanish
   /// until nothing reads it. Drop in a follow-up.
-  whopKycStatus      WhopKycStatus @default(NOT_STARTED)
-  whopKycCompletedAt DateTime?
+  whopKycStatus         WhopKycStatus @default(NOT_STARTED)
+  whopKycCompletedAt    DateTime?
   /// Whop's calculated payout status. Deliberately String, NOT a Prisma enum: an unrecognised
   /// value from Whop would make the enum write throw inside a webhook handler, and Whop retries
   /// only 3 times over ~70s before dropping the event permanently.
-  whopPayoutStatus      String    @default("not_started")
+  whopPayoutStatus      String        @default("not_started")
   /// THE gate for public checkout. WEBHOOK-AUTHORITATIVE, NOT POLLABLE — re-corrected 2026-08-14
   /// after the 08-13 note claimed GET /identity_profiles/{id} made it verifiable. The field is
   /// returned by that endpoint but is NOT reliable there: Whop's own identity_profile.updated for
@@ -162,7 +233,7 @@ model Practitioner {
   /// GET /identity_profiles returns `false` with `linked_companies: []` for that same profile.
   /// A parent-company API key under-reports both. Never gate a sweep on the polled boolean —
   /// use `status: 'approved'` + `payout_status: 'connected'`, which do read accurately.
-  whopPayoutsEnabled    Boolean   @default(false)
+  whopPayoutsEnabled    Boolean       @default(false)
   /// `idpf_…`. Learned from identity_profile.* webhooks (envelope company_id → data.id) — that
   /// pairing is the ONLY way to build the mapping, because linked_companies reads back empty
   /// for parent-company API keys, so the profile list cannot be attributed to a company.
@@ -170,22 +241,22 @@ model Practitioner {
   /// `poact_…`. GET /payout_accounts keys on THIS id, not the company id — passing biz_… always
   /// 404s (verified live 2026-08-13 against both connected accounts). Learned from
   /// payout_account.status_updated. Without it, payout status cannot be polled at all.
-  whopPayoutAccountId   String?   @unique
+  whopPayoutAccountId   String?       @unique
   whopCompanyCreatedAt  DateTime?
-  whopProducts       WhopProduct[]
+  whopProducts          WhopProduct[]
 
   // Layer X — platform subscription (practitioner pays $59/mo to be listed; pilots trial for 90 days)
-  subscriptionStatus SubscriptionStatus @default(NONE)
+  subscriptionStatus          SubscriptionStatus @default(NONE)
   /// DEPRECATED — superseded by trialEndsAt + the ADMIN exemption (see
   /// docs/superpowers/specs/2026-07-16-pilot-trial-design.md). No longer read by isListed().
   /// Column retained one release so the live deployment does not break the moment the
   /// migration applies (expand/contract); drop it in a follow-up once nothing reads it.
-  comped             Boolean            @default(false)
+  comped                      Boolean            @default(false)
   /// 90-day pilot clock. null = pre-trial (operator-seeded, never onboarded) and still listed;
   /// future = trial running; past = expired. Set ONLY by genuine onboarding — never inferred
   /// from a seed date. Admins are exempt from it entirely.
-  trialEndsAt        DateTime?
-  whopMembershipId   String?            @unique // membership on our own $59/mo Whop product
+  trialEndsAt                 DateTime?
+  whopMembershipId            String?            @unique // membership on our own $59/mo Whop product
   /// Per-practitioner checkout for the monthly listing plan, minted once and reused. Carries
   /// metadata.practitioner_id so the webhook attributes payment directly instead of matching on
   /// email — which silently fails when someone pays from a different address than their profile.
@@ -210,6 +281,23 @@ model BookingLink {
   url            String
   sortOrder      Int          @default(0)
   createdAt      DateTime     @default(now())
+
+  /// §4 — the public button text. Defaults to "Book a free consultation" when a zero-price
+  /// Offering is attached and "Book now" otherwise; practitioner-overridable. When the free
+  /// consult is LINK_ONLY, this button is the ONLY signal it exists.
+  ctaLabel String?
+
+  /// Auto-detected from the hostname on paste (§6, §15.1). Drives which adapter embeds the
+  /// scheduler. OTHER is the null adapter — a first-class member, not an error branch: it is what
+  /// runs for a scheduler nobody anticipated, and the flow must be complete with it installed.
+  provider BookingProvider @default(OTHER)
+
+  /// D1 — the relationship is owned by the OFFERING side. This back-relation exists so the
+  /// chooser can query it; there is no join table and no bidirectional editing.
+  offerings      WhopProduct[]
+  bookingIntents BookingIntent[]
+  /// §14.3 back-relation for Practitioner.primaryBookingLink.
+  primaryFor     Practitioner?   @relation("PrimaryBookingLink")
 
   @@index([practitionerId])
 }
@@ -335,7 +423,84 @@ model WhopProduct {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ── Booking & checkout (spec §2, §3, §9; decisions D1, D2, D3, D7) ──
+
+  /// D2 — a free consultation is an OFFERING (price 0, no Whop plan), not "a Booking Link with
+  /// zero Offerings". Modelling it the other way cannot express "three paid services PLUS a free
+  /// consult" at all, and overloads "unconfigured" to mean "free". Forces acceptsPayments off.
+  isConsult Boolean @default(false)
+
+  /// D7 — ONE STORED BIT OF INTENT. Capability is derived, never stored:
+  ///   payments_live = acceptsPayments && practitioner.whopPayoutsEnabled && whopPlanId != null
+  /// Deliberately NOT a PaymentMode enum and NOT a `whop_status` column — a small enum shadowing
+  /// a fact already stored more precisely is the mistake whopKycStatus already made. The gate is
+  /// whopPayoutsEnabled (verified 2026-08-14: Whop's payout_status has NINE states, and
+  /// payouts_enabled is webhook-authoritative and under-reported on read).
+  /// False is a deliberate off-platform sale; true with payouts not enabled is "not ready yet".
+  /// §9's pending-verification behaviour falls out for free: tick it early, capability flips
+  /// itself on when Whop says so.
+  acceptsPayments Boolean @default(false)
+
+  /// Minutes. Display only — we never reason about the practitioner's calendar.
+  duration Int?
+
+  /// D1 — the single FK that owns the relationship. SetNull, never Cascade: deleting a Booking
+  /// Link must unlink its Offerings, never delete them. Nullable is a real state (§2 derived
+  /// table): no link + payments live = async delivery, capture → checkout, no calendar step.
+  bookingLinkId String?
+  bookingLink   BookingLink? @relation(fields: [bookingLinkId], references: [id], onDelete: SetNull)
+
+  /// D3 — gates the profile GRID only. LINK_ONLY requires bookingLinkId (enforced by
+  /// construction in admin, with a DB CHECK as backstop for API/import writes) because an
+  /// unlisted Offering with no link would be reachable from nowhere at all.
+  listingVisibility ListingVisibility @default(LISTED)
+
+  bookingIntents BookingIntent[]
+
   @@index([practitionerId, active])
+  @@index([bookingLinkId])
+}
+
+/// §5 — our record of one buyer moving through capture → schedule → checkout.
+///
+/// Deliberately NOT a booking record (§18 open): the practitioner's calendar remains the source
+/// of truth for the appointment itself. This exists so a lead survives every downstream failure —
+/// step 1 is captured before anything external is touched, so a dead scheduler link or a failed
+/// checkout still leaves the practitioner a real contact.
+model BookingIntent {
+  id             String       @id @default(cuid())
+  practitionerId String
+  practitioner   Practitioner @relation(fields: [practitionerId], references: [id], onDelete: Cascade)
+
+  /// Both nullable and both SetNull: a lead must outlive the link or Offering it came through.
+  /// A PAID intent whose Offering was later deleted is still a real transaction we must not lose.
+  bookingLinkId String?
+  bookingLink   BookingLink? @relation(fields: [bookingLinkId], references: [id], onDelete: SetNull)
+  offeringId    String?
+  offering      WhopProduct? @relation(fields: [offeringId], references: [id], onDelete: SetNull)
+
+  entryPoint BookingEntryPoint
+
+  // Step 1 (§5) is LEAD CAPTURE, NOT INTAKE — four fields, deliberately minimal. The
+  // practitioner's own scheduler already asks its intake questions and we neither can nor should
+  // duplicate them (§6: no per-practitioner intake-field mapper).
+  name  String
+  email String
+  phone String?
+  note  String?
+
+  status         BookingIntentStatus @default(PENDING)
+  /// Null until step 2 is passed. See ScheduleSignal — ASSUMED is a valid, expected outcome.
+  scheduleSignal ScheduleSignal?
+  scheduledAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([practitionerId, status])
+  /// §10's abandonment sweep scans by status + age; without this it degrades to a full scan as
+  /// intents accumulate.
+  @@index([status, createdAt])
 }
 
 // Wedge 2C — webhook event log (dedup + audit + retry surface)

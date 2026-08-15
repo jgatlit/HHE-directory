@@ -20,13 +20,17 @@ async function loadPractitioner(slug: string) {
       specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
       bookingLinks: { orderBy: { sortOrder: 'asc' } },
       caseStudies: { orderBy: { createdAt: 'desc' } },
-      // No `active`/`archived` filter. Both columns are dead — written by nothing in src/ or
-      // scripts/ and exposed by no UI — so this filtered on values that were always their
-      // defaults. That made it a trap rather than a feature: `active` reads like a
-      // hidden/visible toggle and is not one, and because it filtered HERE it would have
-      // removed an Offering from every public surface at once, with no UI to explain why.
-      // Visibility lands as `listingVisibility` in §17.2b. See prisma/schema.prisma.
-      whopProducts: { orderBy: OFFERING_ORDER },
+      // No `active` filter: that column is dead and was a trap — it reads like a hidden/visible
+      // toggle and is not one, and because it filtered HERE it would have removed an Offering
+      // from every public surface at once, chooser included, with no UI to explain why.
+      //
+      // `archived` IS kept. It stays the natural home for soft-delete (hard-deleting an Offering
+      // with BookingIntent rows pointing at it is its own problem), and the dashboard and admin
+      // both already filter on it — dropping it here alone would let an archived Offering show
+      // publicly while hidden from its own owner.
+      //
+      // `listingVisibility` gates this grid from §17.4; the chooser deliberately ignores it (§4).
+      whopProducts: { where: { archived: false }, orderBy: OFFERING_ORDER },
     },
   });
 }
