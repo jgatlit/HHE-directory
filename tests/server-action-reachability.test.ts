@@ -136,3 +136,46 @@ describe('cron routes are registered', () => {
     }
   });
 });
+
+/**
+ * The flow URL is an unauthenticated bearer credential, and §10 mails it out.
+ *
+ * `BookingIntent.id` is a cuid — `c` + a base36 MILLISECOND timestamp + a monotonic counter + a
+ * per-process host fingerprint — so ids minted in a known window are enumerable at far better
+ * than random odds. `publicToken` exists so the public URL is 244 bits of randomness instead.
+ *
+ * Asserted structurally because the regression is silent: swapping `publicToken` back to `id` in
+ * a redirect or a lookup type-checks, passes every behavioural test (both are strings that
+ * address the same row), renders identically, and quietly re-opens enumeration. There is no
+ * runtime assertion that can tell "the right string" from "a string".
+ */
+describe('the public booking URL is addressed by a random token, never the cuid id', () => {
+  const flowDir = join(ROOT, 'app/practitioners/[slug]/book');
+
+  it('resolves the flow route and its action by publicToken', () => {
+    for (const file of ['[token]/page.tsx', '[token]/actions.ts']) {
+      const src = readFileSync(join(flowDir, file), 'utf8');
+      expect(src, `${file} must look the intent up by publicToken`).toMatch(/publicToken:\s*(params\.)?token/);
+    }
+  });
+
+  it('redirects capture to the token, so a fresh lead never lands on an enumerable URL', () => {
+    const src = readFileSync(join(flowDir, 'actions.ts'), 'utf8');
+    const redirectLine = src.split('\n').find((l) => l.includes('/book/${'));
+    expect(redirectLine, 'capture must redirect into the flow').toBeDefined();
+    expect(redirectLine).toContain('publicToken');
+    expect(redirectLine).not.toContain('intent.id');
+  });
+
+  it('never builds a /book/ URL out of an intent id anywhere in src', () => {
+    const offenders = walk(ROOT)
+      .filter((f) => /\.tsx?$/.test(f))
+      .flatMap((f) =>
+        readFileSync(f, 'utf8')
+          .split('\n')
+          .map((line, i) => ({ f, i: i + 1, line }))
+          .filter(({ line }) => /\/book\/\$\{[^}]*\bid\b[^}]*\}/.test(line)),
+      );
+    expect(offenders.map((o) => `${o.f}:${o.i}`)).toEqual([]);
+  });
+});
