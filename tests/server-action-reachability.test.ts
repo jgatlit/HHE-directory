@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 /**
  * Guards the defect class this repo keeps re-hitting: a capability that is complete, correct, and
@@ -31,6 +31,17 @@ const MUST_HAVE_A_CALLER = [
   'publishOffering',
   'unpublishOffering',
 ];
+
+/**
+ * Public flow routes that must be REACHABLE FROM THE UI, not merely by typing a URL.
+ *
+ * `/practitioners/[slug]/book` currently fails this deliberately: §17.4a owns the profile CTA
+ * hierarchy and has not landed, so the guard records the gap rather than asserting it away.
+ * Flip `linked` to true in the PR that wires the CTA — that is the moment this becomes a real
+ * assertion instead of a reminder, and it is exactly the step that got skipped for
+ * startSubscriptionCheckout (correct, exported, callerless for two and a half months).
+ */
+const FLOW_ROUTES = [{ path: '/practitioners/', segment: 'book', linked: false, owner: '§17.4a' }];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -66,6 +77,22 @@ describe('server-action reachability', () => {
         `${name} has no consumer anywhere in src/. It is exported, correct, and unreachable — ` +
           `the exact shape that left Layer X resolving payers by email for 2.5 months.`,
       ).not.toHaveLength(0);
+    });
+  }
+});
+
+describe('flow routes are reachable from the UI', () => {
+  for (const route of FLOW_ROUTES) {
+    it(`${route.segment} flow — linked from a page: expected ${route.linked}`, () => {
+      const linked = files.some(
+        (f) => !f.includes(`${sep}book${sep}`) && /href=\{?[`'"][^`'"]*\/book\b/.test(readFileSync(f, 'utf8')),
+      );
+      expect(
+        linked,
+        route.linked
+          ? `The ${route.segment} flow has no link from any page — it is reachable only by typing a URL.`
+          : `The ${route.segment} flow is now linked. ${route.owner} has landed, so flip \`linked\` to true and keep this asserted.`,
+      ).toBe(route.linked);
     });
   }
 });
