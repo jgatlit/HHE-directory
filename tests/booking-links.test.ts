@@ -54,8 +54,8 @@ describe('parseBookingLinkRows', () => {
       ['https://cal.com/a', 'https://cal.com/b'],
     );
     expect(out).toEqual([
-      { id: 'X', label: 'Free intro', url: 'https://cal.com/a' },
-      { id: null, label: 'Deep dive', url: 'https://cal.com/b' },
+      { id: 'X', label: 'Free intro', url: 'https://cal.com/a', ctaLabel: null },
+      { id: null, label: 'Deep dive', url: 'https://cal.com/b', ctaLabel: null },
     ]);
   });
 
@@ -63,7 +63,7 @@ describe('parseBookingLinkRows', () => {
     // The id must NOT survive — the reconcile keys deletion off absence from this list, so
     // returning it would resurrect a link the practitioner just cleared.
     const out = rows(['X', 'Y'], ['a', 'b'], ['https://cal.com/a', '   ']);
-    expect(out).toEqual([{ id: 'X', label: 'a', url: 'https://cal.com/a' }]);
+    expect(out).toEqual([{ id: 'X', label: 'a', url: 'https://cal.com/a', ctaLabel: null }]);
   });
 
   it('returns null on an unnormalisable URL so the caller can redirect', () => {
@@ -99,8 +99,8 @@ describe('parseBookingLinkRows', () => {
     // nothing is dropped, so nothing can displace a persisted id.
     const out = rows(['', 'Y'], ['new', 'original'], ['https://cal.com/s', 'https://cal.com/s']);
     expect(out).toEqual([
-      { id: null, label: 'new', url: 'https://cal.com/s' },
-      { id: 'Y', label: 'original', url: 'https://cal.com/s' },
+      { id: null, label: 'new', url: 'https://cal.com/s', ctaLabel: null },
+      { id: 'Y', label: 'original', url: 'https://cal.com/s', ctaLabel: null },
     ]);
   });
 
@@ -113,8 +113,8 @@ describe('parseBookingLinkRows', () => {
     // Degradation, not corruption: a missing id reads as new and creates a row.
     const out = rows([], ['a', 'b'], ['https://cal.com/a', 'https://cal.com/b']);
     expect(out).toEqual([
-      { id: null, label: 'a', url: 'https://cal.com/a' },
-      { id: null, label: 'b', url: 'https://cal.com/b' },
+      { id: null, label: 'a', url: 'https://cal.com/a', ctaLabel: null },
+      { id: null, label: 'b', url: 'https://cal.com/b', ctaLabel: null },
     ]);
   });
 

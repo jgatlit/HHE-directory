@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { OfferingOrderControls } from '@/components/practitioners/OfferingOrderControls';
 import { PendingButton } from '@/components/practitioners/PendingButton';
+import { OfferingFields, type BookingLinkOption } from '@/components/practitioners/OfferingFields';
 import { Separator } from '@/components/ui/separator';
 
 type Offering = {
@@ -12,24 +13,18 @@ type Offering = {
   priceUsdCents: number;
   interval: 'ONE_TIME' | 'MONTHLY' | 'ANNUAL';
   category: string | null;
-  /** Set only once publishOffering() has minted a live Whop checkout — doubles as the
-   *  published/unpublished flag, so no separate status field is needed. */
+  duration: number | null;
+  isConsult: boolean;
+  acceptsPayments: boolean;
+  bookingLinkId: string | null;
+  listingVisibility: 'LISTED' | 'LINK_ONLY';
+  /** D11 — the published flag is the PLAN id, not purchaseUrl: embedded checkout is addressed by
+   *  plan id and purchaseUrl is the hosted fallback only. */
+  whopPlanId: string | null;
   purchaseUrl: string | null;
 };
 
 type Action = (formData: FormData) => void | Promise<void>;
-
-const CATEGORY_SUGGESTIONS = [
-  'Consultation',
-  'Session',
-  'Package',
-  'Program',
-  'Product',
-  'Treatment',
-  'Subscription',
-];
-
-const dollars = (cents: number) => (cents > 0 ? (cents / 100).toString() : '');
 
 /**
  * Practitioner offerings editor (Phase 2 + Layer Y publish). Offerings are stored locally
@@ -42,6 +37,8 @@ const dollars = (cents: number) => (cents > 0 ? (cents / 100).toString() : '');
 export function OfferingsEditor({
   offerings,
   payoutsEnabled,
+  bookingLinks,
+  practitionerSlug,
   createAction,
   updateAction,
   deleteAction,
@@ -51,6 +48,8 @@ export function OfferingsEditor({
 }: {
   offerings: Offering[];
   payoutsEnabled: boolean;
+  bookingLinks: BookingLinkOption[];
+  practitionerSlug: string;
   createAction: Action;
   updateAction: Action;
   deleteAction: Action;
@@ -79,7 +78,13 @@ export function OfferingsEditor({
             <li key={o.id} className="rounded-lg border p-3">
               <form action={updateAction} className="space-y-3">
                 <input type="hidden" name="offeringId" value={o.id} />
-                <OfferingFields offering={o} idPrefix={o.id} />
+                <OfferingFields
+                  offering={o}
+                  idPrefix={o.id}
+                  bookingLinks={bookingLinks}
+                  payoutsEnabled={payoutsEnabled}
+                  practitionerSlug={practitionerSlug}
+                />
                 <PublishRow
                   offering={o}
                   payoutsEnabled={payoutsEnabled}
@@ -115,7 +120,13 @@ export function OfferingsEditor({
           <Plus className="h-3.5 w-3.5" aria-hidden />
           Add an offering
         </p>
-        <OfferingFields offering={null} idPrefix="new" />
+        <OfferingFields
+          offering={null}
+          idPrefix="new"
+          bookingLinks={bookingLinks}
+          payoutsEnabled={payoutsEnabled}
+          practitionerSlug={practitionerSlug}
+        />
         <div className="flex justify-end">
           <button
             type="submit"
@@ -196,61 +207,3 @@ function PublishRow({
   );
 }
 
-function OfferingFields({ offering, idPrefix }: { offering: Offering | null; idPrefix: string }) {
-  return (
-    <div className="space-y-2.5">
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_9rem]">
-        <input
-          type="text"
-          name="title"
-          required
-          maxLength={80}
-          defaultValue={offering?.title ?? ''}
-          placeholder="e.g. 60-min initial consultation"
-          className="h-9 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
-        />
-        <div className="flex items-center gap-1.5 rounded-md border bg-card px-2">
-          <span className="text-sm text-muted-foreground">$</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            name="price"
-            defaultValue={offering ? dollars(offering.priceUsdCents) : ''}
-            placeholder="150"
-            className="h-9 w-full bg-transparent text-sm outline-none"
-          />
-        </div>
-      </div>
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        <select
-          name="interval"
-          defaultValue={offering?.interval === 'MONTHLY' ? 'MONTHLY' : 'ONE_TIME'}
-          className="h-9 w-full rounded-md border bg-card px-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
-        >
-          <option value="ONE_TIME">One-time (flat fee)</option>
-          <option value="MONTHLY">Monthly (subscription)</option>
-        </select>
-        <input
-          type="text"
-          name="category"
-          list={`offering-cats-${idPrefix}`}
-          defaultValue={offering?.category ?? ''}
-          placeholder="Type (e.g. Consultation)"
-          className="h-9 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
-        />
-        <datalist id={`offering-cats-${idPrefix}`}>
-          {CATEGORY_SUGGESTIONS.map((c) => (
-            <option key={c} value={c} />
-          ))}
-        </datalist>
-      </div>
-      <textarea
-        name="description"
-        rows={2}
-        defaultValue={offering?.description ?? ''}
-        placeholder="Optional — what's included."
-        className="w-full rounded-md border bg-card px-3 py-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
-      />
-    </div>
-  );
-}

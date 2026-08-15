@@ -10,6 +10,8 @@ import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { syncSpecialtySynonyms } from '@/lib/typesense-synonyms';
 import { draftProfile, type DraftSpecialty } from '@/lib/onboarding-draft';
 import { parseBookingLinkRows, MAX_BOOKING_LINKS } from '@/lib/booking-links';
+import { detectProvider, extractUrlFromEmbed } from '@/lib/booking-providers';
+import { normalizeOfferingFields } from '@/lib/offering-fields';
 import { findPlace, findPlacesByName, splitCityEntry, VIRTUAL_PLACE, type Place } from '@/lib/city-catalog';
 import {
   createAccountLink,
@@ -120,6 +122,10 @@ const BOOKING_HOSTS = [
   'koalendar.com',
   'youcanbookme.com',
   'acuityscheduling.com',
+  // Acuity's own share dialog hands out `as.me` short links, and they were REJECTED on save —
+  // the reference practitioner (Sarah Schindler) is on Acuity, so the one cohort we most needed
+  // to work could not save their real booking URL. Kept in sync with src/lib/booking-providers.ts.
+  'as.me',
 ];
 
 function normalizeBookingUrl(raw: string): string | null {
@@ -292,7 +298,11 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   // new. Zip/dedupe rules live in parseBookingLinkRows so they can be tested directly.
   const bookingIds = formData.getAll('bookingId').map((s) => String(s).trim());
   const bookingLabels = formData.getAll('bookingLabel').map((s) => String(s));
-  const bookingUrlsRaw = formData.getAll('bookingUrl').map((s) => String(s).trim());
+  const bookingUrlsRaw = formData
+    .getAll('bookingUrl')
+    // §6 input tolerance: several providers' "share" dialogs give embed markup, not a link.
+    .map((s) => extractUrlFromEmbed(String(s)));
+  const bookingCtaLabels = formData.getAll('bookingCtaLabel').map((s) => String(s));
   // Refuse rather than truncate. Silently keeping the first N would drop links the practitioner
   // can still see in their own form, which is the failure mode this whole workstream exists to
   // remove; and the row count directly multiplies how long the reconcile holds its transaction.
@@ -301,7 +311,7 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   }
 
   const bookingLinks = parseBookingLinkRows(
-    { ids: bookingIds, labels: bookingLabels, urls: bookingUrlsRaw },
+    { ids: bookingIds, labels: bookingLabels, urls: bookingUrlsRaw, ctaLabels: bookingCtaLabels },
     normalizeBookingUrl,
   );
   if (bookingLinks === null) {
@@ -402,7 +412,15 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
       const updated = b.id
         ? await tx.bookingLink.updateMany({
             where: { id: b.id, practitionerId: target.id },
-            data: { label: b.label, url: b.url, sortOrder: idx },
+            data: {
+              label: b.label,
+              url: b.url,
+              sortOrder: idx,
+              ctaLabel: b.ctaLabel,
+              // Derived, never practitioner-supplied (§6). Recomputed on every save so a
+              // corrected URL cannot leave a stale provider behind driving the wrong adapter.
+              provider: detectProvider(b.url),
+            },
           })
         : { count: 0 };
       // An id that resolved to nothing falls through to a create, so the practitioner's row is
@@ -429,7 +447,14 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
           );
         }
         await tx.bookingLink.create({
-          data: { practitionerId: target.id, label: b.label, url: b.url, sortOrder: idx },
+          data: {
+            practitionerId: target.id,
+            label: b.label,
+            url: b.url,
+            sortOrder: idx,
+            ctaLabel: b.ctaLabel,
+            provider: detectProvider(b.url),
+          },
         });
       }
     }
@@ -819,10 +844,40 @@ function offeringInterval(raw: FormDataEntryValue | null): 'ONE_TIME' | 'MONTHLY
   return raw === 'MONTHLY' ? 'MONTHLY' : 'ONE_TIME';
 }
 
+/**
+ * Resolve the §12 offering controls from a posted form.
+ *
+ * ⚠️ `bookingLinkId` is a user-supplied identifier used in a write, so it is resolved against THIS
+ * practitioner's links and dropped otherwise — a crafted POST cannot attach an Offering to another
+ * practitioner's booking link. D6 makes that a single scoped query: a BookingLink is always
+ * practitioner-scoped, and a shared scheduler URL is a second row, not a shared entity.
+ *
+ * Everything after the lookup is pure and lives in `normalizeOfferingFields` so the invariants can
+ * be tested without a database.
+ */
+async function offeringFieldsFrom(formData: FormData, practitionerId: string) {
+  const requested = String(formData.get('bookingLinkId') ?? '').trim();
+  const owned = requested
+    ? await prisma.bookingLink.findFirst({
+        where: { id: requested, practitionerId },
+        select: { id: true },
+      })
+    : null;
+
+  return normalizeOfferingFields({
+    isConsult: formData.get('isConsult') != null,
+    acceptsPayments: formData.get('acceptsPayments') != null,
+    showOnProfile: formData.get('showOnProfile') != null,
+    rawDuration: String(formData.get('duration') ?? ''),
+    ownedBookingLinkId: owned?.id ?? null,
+  });
+}
+
 export async function createOffering(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
   const title = String(formData.get('title') ?? '').trim();
   if (!title) redirect(`/practitioners/${slug}/edit?error=offering-title#offerings`);
+  const extra = await offeringFieldsFrom(formData, target.id);
   await prisma.whopProduct.create({
     data: {
       practitionerId: target.id,
@@ -830,7 +885,12 @@ export async function createOffering(slug: string, formData: FormData): Promise<
       description: String(formData.get('description') ?? '').trim() || null,
       category: String(formData.get('category') ?? '').trim() || null,
       interval: offeringInterval(formData.get('interval')),
-      priceUsdCents: parsePriceToCents(formData.get('price')),
+      priceUsdCents: extra.priceOverride ?? parsePriceToCents(formData.get('price')),
+      isConsult: extra.isConsult,
+      acceptsPayments: extra.acceptsPayments,
+      duration: extra.duration,
+      bookingLinkId: extra.bookingLinkId,
+      listingVisibility: extra.listingVisibility,
     },
   });
   revalidatePath(`/practitioners/${slug}`);
@@ -844,6 +904,7 @@ export async function updateOffering(slug: string, formData: FormData): Promise<
   const title = String(formData.get('title') ?? '').trim();
   if (!id || !title) redirect(`/practitioners/${slug}/edit?error=offering-title#offerings`);
   // updateMany scoped by practitionerId = the ownership check (no cross-practitioner edits).
+  const extra = await offeringFieldsFrom(formData, target.id);
   await prisma.whopProduct.updateMany({
     where: { id, practitionerId: target.id },
     data: {
@@ -851,7 +912,12 @@ export async function updateOffering(slug: string, formData: FormData): Promise<
       description: String(formData.get('description') ?? '').trim() || null,
       category: String(formData.get('category') ?? '').trim() || null,
       interval: offeringInterval(formData.get('interval')),
-      priceUsdCents: parsePriceToCents(formData.get('price')),
+      priceUsdCents: extra.priceOverride ?? parsePriceToCents(formData.get('price')),
+      isConsult: extra.isConsult,
+      acceptsPayments: extra.acceptsPayments,
+      duration: extra.duration,
+      bookingLinkId: extra.bookingLinkId,
+      listingVisibility: extra.listingVisibility,
     },
   });
   revalidatePath(`/practitioners/${slug}`);
