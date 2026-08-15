@@ -28,6 +28,8 @@ import {
 import { OfferingsEditor } from '@/components/practitioners/OfferingsEditor';
 import { SubscriptionSection } from '@/components/practitioners/SubscriptionSection';
 import { PaymentsSection } from '@/components/practitioners/PaymentsSection';
+import { BookingsSection, type BookingRow } from '@/components/practitioners/BookingsSection';
+import { paymentsLive } from '@/lib/booking-flow';
 import { BookingLinksField } from '@/components/practitioners/BookingLinksField';
 import { SpecialtyComboboxField } from '@/components/practitioners/SpecialtyComboboxField';
 import { PhotoUploadField } from '@/components/practitioners/PhotoUploadField';
@@ -95,7 +97,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
     redirect('/auth/error?error=AccessDenied');
   }
 
-  const [specialties, approvedAliases] = await Promise.all([
+  const [specialties, approvedAliases, intents] = await Promise.all([
     prisma.specialty.findMany({
       where: { status: { in: ['ACTIVE', 'PROPOSED'] } },
       orderBy: { name: 'asc' },
@@ -104,7 +106,51 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
       where: { status: 'APPROVED' },
       select: { label: true, specialtyId: true },
     }),
+    // §10 — the scheduled-but-unpaid obligation. Unpaid intents only: this is a work queue, not
+    // a sales ledger, and a paid booking needs nothing from the practitioner here.
+    prisma.bookingIntent.findMany({
+      where: { practitionerId: practitioner.id, paidAt: null, status: { not: 'PAID' } },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        note: true,
+        status: true,
+        scheduleSignal: true,
+        scheduledAt: true,
+        createdAt: true,
+        offering: {
+          select: { title: true, priceUsdCents: true, acceptsPayments: true, whopPlanId: true },
+        },
+      },
+      orderBy: [{ scheduledAt: 'desc' }, { createdAt: 'desc' }],
+      take: 50,
+    }),
   ]);
+
+  const bookingRows: BookingRow[] = intents.map((i) => ({
+    id: i.id,
+    name: i.name,
+    email: i.email,
+    phone: i.phone,
+    note: i.note,
+    status: i.status,
+    scheduleSignal: i.scheduleSignal,
+    scheduledAt: i.scheduledAt,
+    createdAt: i.createdAt,
+    offeringTitle: i.offering?.title ?? null,
+    offeringPriceUsdCents: i.offering?.priceUsdCents ?? null,
+    // Resolved HERE via the shared helper rather than in the component, so the dashboard's idea
+    // of "was there a payment to make?" cannot drift from the flow page's or the sweep's.
+    paymentsLive: i.offering
+      ? paymentsLive({
+          acceptsPayments: i.offering.acceptsPayments,
+          practitionerPayoutsEnabled: practitioner.whopPayoutsEnabled,
+          whopPlanId: i.offering.whopPlanId,
+        })
+      : false,
+  }));
 
   // Dual-label: seed the combobox with each selected specialty's raw phrasing (their voice),
   // falling back to the canonical name when no rawLabel was captured.
@@ -551,6 +597,10 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             </ul>
           </Card>
         )}
+
+        {/* Above billing and offerings deliberately: someone holding a slot on this
+            practitioner's calendar is the most time-sensitive thing on the page. */}
+        <BookingsSection rows={bookingRows} />
 
         <SubscriptionSection
           status={practitioner.subscriptionStatus}
