@@ -8,11 +8,18 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn<(args: unknown) => Promise<unknown[]>>(),
   updateMany: vi.fn<(args: unknown) => Promise<{ count: number }>>(),
+  update: vi.fn<(args: unknown) => Promise<unknown>>(),
   sendEmail: vi.fn<(args: unknown) => Promise<{ id: string }>>(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
-  prisma: { bookingIntent: { findMany: mocks.findMany, updateMany: mocks.updateMany } },
+  prisma: {
+    bookingIntent: {
+      findMany: mocks.findMany,
+      updateMany: mocks.updateMany,
+      update: mocks.update,
+    },
+  },
 }));
 vi.mock('@/lib/email', () => ({ sendEmail: mocks.sendEmail }));
 vi.mock('@/lib/site', () => ({ SITE_URL: 'https://naturalhealthpros.com' }));
@@ -33,6 +40,8 @@ function intent(over: Record<string, unknown> = {}) {
     paidAt: null,
     createdAt: HOUR_AGO,
     scheduledAt: HALF_HOUR_AGO,
+    resumeEmailSentAt: null,
+    whopCheckoutSessionId: 'chs_1',
     practitioner: { slug: 'sarah', displayName: 'Sarah Schindler', whopPayoutsEnabled: true },
     offering: {
       title: 'Root Cause Release',
@@ -50,12 +59,27 @@ beforeAll(async () => {
   ({ GET } = await import('@/app/api/cron/booking-sweep/route'));
 });
 
+/**
+ * The route runs TWO findMany queries — resume candidates, then practitioner notices — so the
+ * mock dispatches on the query rather than answering both with the same rows. A shared
+ * mockResolvedValue fed the notice loop rows shaped for the resume loop, which crashed the route
+ * and made every send assertion fail for a reason that had nothing to do with the assertion.
+ */
+function whenQueried({ resume = [], notify = [] }: { resume?: unknown[]; notify?: unknown[] }) {
+  mocks.findMany.mockImplementation(async (args) => {
+    const where = (args as { where: Record<string, unknown> }).where;
+    return 'resumeEmailSentAt' in where ? resume : notify;
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
   process.env.RESEND_API_KEY = 'test-key';
   delete process.env.CRON_SECRET;
-  mocks.findMany.mockResolvedValue([]);
+  whenQueried({});
   mocks.updateMany.mockResolvedValue({ count: 0 });
+  mocks.update.mockResolvedValue({});
   mocks.sendEmail.mockResolvedValue({ id: 'msg_1' });
 });
 
@@ -63,7 +87,7 @@ const req = (headers: Record<string, string> = {}) =>
   new Request('https://x/api/cron/booking-sweep', { headers });
 
 describe('auth', () => {
-  it('is open when CRON_SECRET is unset, so local dev can curl it', async () => {
+  it('is open when CRON_SECRET is unset OUTSIDE production, so local dev can curl it', async () => {
     expect((await GET(req())).status).toBe(200);
   });
 
@@ -74,18 +98,32 @@ describe('auth', () => {
     expect((await GET(req({ authorization: 'Bearer s3cret' }))).status).toBe(200);
   });
 
-  it('refuses to run with no RESEND_API_KEY rather than reporting an empty success', async () => {
+  // The open-when-unset shape came from /api/health/search, which is READ-ONLY. This route
+  // relabels rows in bulk and mails buyers from the verified domain, so a missing secret on a
+  // deployed environment must fail closed rather than expose that to anyone who guesses the path.
+  it('FAILS CLOSED in production when CRON_SECRET is missing', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const res = await GET(req());
+    expect(res.status).toBe(503);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing RESEND_API_KEY, but still runs the relabel that needs no email', async () => {
     delete process.env.RESEND_API_KEY;
     const res = await GET(req());
-    // Reporting `sent: 0` on missing config is the silent failure this route exists to prevent.
-    expect(res.status).toBe(500);
+    const body = (await res.json()) as { ok: boolean; emailConfigured: boolean };
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(body.emailConfigured).toBe(false);
+    expect(body.ok).toBe(false);
+    // Freezing the lead queue over an email key it does not depend on would be its own bug.
+    expect(mocks.updateMany).toHaveBeenCalled();
   });
 });
 
 describe('who gets mailed', () => {
   it('mails the BUYER, not the practitioner, with the token URL', async () => {
-    mocks.findMany.mockResolvedValue([intent()]);
+    whenQueried({ resume: [intent()] });
     await GET(req());
     const arg = mocks.sendEmail.mock.calls[0]![0] as { to: string; text: string };
     expect(arg.to).toBe('dana@example.com');
@@ -95,7 +133,7 @@ describe('who gets mailed', () => {
   });
 
   it('keys idempotency on the intent, which is what makes a 15-minute cron safe', async () => {
-    mocks.findMany.mockResolvedValue([intent()]);
+    whenQueried({ resume: [intent()] });
     await GET(req());
     const arg = mocks.sendEmail.mock.calls[0]![0] as { idempotencyKey: string };
     // Without this the same buyer is mailed every 15 minutes until they pay.
@@ -103,7 +141,7 @@ describe('who gets mailed', () => {
   });
 
   it('skips a free consultation and says so, rather than skipping silently', async () => {
-    mocks.findMany.mockResolvedValue([intent({ offering: { ...intent().offering, isConsult: true } })]);
+    whenQueried({ resume: [intent({ offering: { ...intent().offering, isConsult: true } })] });
     const res = await GET(req());
     const body = (await res.json()) as { resume: { sent: number; skipped: number }; skipReasons: Record<string, number> };
     expect(mocks.sendEmail).not.toHaveBeenCalled();
@@ -112,25 +150,48 @@ describe('who gets mailed', () => {
   });
 
   it('skips when payments were never live for that offering', async () => {
-    mocks.findMany.mockResolvedValue([intent({ practitioner: { ...intent().practitioner, whopPayoutsEnabled: false } })]);
+    whenQueried({ resume: [intent({ practitioner: { ...intent().practitioner, whopPayoutsEnabled: false } })] });
     const body = (await (await GET(req())).json()) as { skipReasons: Record<string, number> };
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(body.skipReasons['payments-not-live']).toBe(1);
   });
 
-  it('queries only unpaid SCHEDULED intents behind the listing gate', async () => {
+  it('queries unpaid, never-yet-mailed, old-enough intents behind the listing gate', async () => {
     await GET(req());
     const where = (mocks.findMany.mock.calls[0]![0] as { where: Record<string, unknown> }).where;
-    expect(where.status).toBe('SCHEDULED');
     expect(where.paidAt).toBeNull();
+    // Exactly-once. Without this the same buyer is re-selected every run forever.
+    expect(where.resumeEmailSentAt).toBeNull();
+    // The 15-minute capture anchor must be IN THE QUERY, not only in resumeDecision — otherwise
+    // dropping it here silently widens who is considered.
+    const createdAt = where.createdAt as { lte: Date };
+    expect(createdAt.lte.getTime()).toBeLessThanOrEqual(Date.now() - 15 * 60 * 1000);
     // A delisted practitioner's flow page 404s, so a resume link would mail a dead end.
     expect(where.practitioner).toBeTruthy();
+    // BOTH routes into state (b): scheduled, and the no-scheduler cohort that reached checkout.
+    expect(JSON.stringify(where.OR)).toContain('SCHEDULED');
+    expect(JSON.stringify(where.OR)).toContain('whopCheckoutSessionId');
+  });
+
+  it('marks the intent sent only AFTER the send succeeds', async () => {
+    whenQueried({ resume: [intent()] });
+    await GET(req());
+    const call = mocks.update.mock.calls[0]![0] as { where: { id: string }; data: Record<string, unknown> };
+    expect(call.where.id).toBe('int_1');
+    expect(call.data.resumeEmailSentAt).toBeInstanceOf(Date);
+  });
+
+  it('does NOT mark sent when the send throws, so the intent is retried', async () => {
+    whenQueried({ resume: [intent()] });
+    mocks.sendEmail.mockRejectedValueOnce(new Error('bounced'));
+    await GET(req());
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 });
 
 describe('failure reporting', () => {
   it('keeps sending after one bad address, and reports the failure with a 207', async () => {
-    mocks.findMany.mockResolvedValue([intent({ id: 'int_1' }), intent({ id: 'int_2' })]);
+    whenQueried({ resume: [intent({ id: 'int_1' }), intent({ id: 'int_2' })] });
     mocks.sendEmail.mockRejectedValueOnce(new Error('bounced'));
     const res = await GET(req());
     expect(res.status).toBe(207);
@@ -155,10 +216,102 @@ describe('cold leads — state (a)', () => {
     expect(body.abandoned).toBe(3);
   });
 
+  // THE DESTRUCTIVE HALF. Without asserting the age cutoff, setting COLD_LEAD_MS to 0 — or
+  // dropping the createdAt clause entirely — passes every other test in both files while the next
+  // cron run relabels every live lead, including one captured thirty seconds ago.
+  it('only relabels leads older than the cold-lead window', async () => {
+    await GET(req());
+    const args = mocks.updateMany.mock.calls[0]![0] as { where: { createdAt: { lte: Date } } };
+    const cutoff = args.where.createdAt.lte;
+    expect(cutoff).toBeInstanceOf(Date);
+    // Comfortably in the past — a few days at minimum, never "now".
+    expect(cutoff.getTime()).toBeLessThan(Date.now() - 24 * 60 * 60 * 1000);
+  });
+
+  // A PENDING intent WITH a checkout session is §5's 1 → 3 cohort: they reached a real checkout
+  // and are recoverable. Sweeping them in here would file a live buyer as abandoned.
+  it('never relabels a PENDING intent that reached a checkout', async () => {
+    await GET(req());
+    const args = mocks.updateMany.mock.calls[0]![0] as { where: { whopCheckoutSessionId: null } };
+    expect(args.where.whopCheckoutSessionId).toBeNull();
+  });
+
   it('sends no buyer email for state (a) — they never reached a checkout', async () => {
-    mocks.findMany.mockResolvedValue([]);
+    whenQueried({});
     mocks.updateMany.mockResolvedValue({ count: 5 });
     await GET(req());
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The practitioner notice moved OUT of `recordScheduleSignal` and into this cron. Inline it put a
+ * Resend round-trip on the buyer's critical path at the highest-drop-off moment in the flow, and
+ * — because that endpoint is public, unauthenticated and has no per-practitioner burst bound —
+ * it bypassed the flood guard the sibling capture action exists to provide.
+ */
+describe('practitioner notices', () => {
+  function scheduledRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'int_9',
+      name: 'Dana Reed',
+      email: 'dana@example.com',
+      phone: null,
+      scheduleSignal: 'SELF_REPORT',
+      practitioner: {
+        slug: 'sarah',
+        whopPayoutsEnabled: true,
+        user: { email: 'sarah@example.com' },
+      },
+      offering: {
+        title: 'Root Cause Release',
+        archived: false,
+        priceUsdCents: 5500,
+        acceptsPayments: true,
+        whopPlanId: 'plan_1',
+      },
+      ...over,
+    };
+  }
+
+  it('mails the PRACTITIONER, once, and marks it sent', async () => {
+    whenQueried({ notify: [scheduledRow()] });
+    await GET(req());
+    const arg = mocks.sendEmail.mock.calls[0]![0] as { to: string; idempotencyKey: string };
+    expect(arg.to).toBe('sarah@example.com');
+    expect(arg.idempotencyKey).toBe('booking-scheduled/int_9');
+    const upd = mocks.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(upd.data.scheduledNoticeSentAt).toBeInstanceOf(Date);
+  });
+
+  it('only considers intents not already notified', async () => {
+    await GET(req());
+    const notifyCall = mocks.findMany.mock.calls
+      .map((c) => (c[0] as { where: Record<string, unknown> }).where)
+      .find((w) => 'scheduledNoticeSentAt' in w);
+    expect(notifyCall).toBeTruthy();
+    expect(notifyCall!.scheduledNoticeSentAt).toBeNull();
+    expect(notifyCall!.status).toBe('SCHEDULED');
+  });
+
+  // An offering archived after capture owes nothing — the flow page stops rendering its checkout
+  // entirely — so telling the practitioner to chase payment sends them after money the buyer has
+  // no way to give them.
+  it('does not claim payment is outstanding on an archived offering', async () => {
+    whenQueried({ notify: [scheduledRow({ offering: { ...scheduledRow().offering, archived: true } })] });
+    await GET(req());
+    const arg = mocks.sendEmail.mock.calls[0]![0] as { text: string };
+    expect(arg.text).not.toContain('not completed payment');
+  });
+
+  // §11's toggle offers "tell me on checkout instead", but no checkout-time notification exists
+  // anywhere in this codebase — so gating here would suppress with no substitute, leaving a
+  // practitioner never told that a stranger is on their calendar.
+  it('is NOT gated by the lead-email preference', async () => {
+    whenQueried({
+      notify: [scheduledRow({ practitioner: { ...scheduledRow().practitioner, notifyLeadsImmediately: false } })],
+    });
+    await GET(req());
+    expect(mocks.sendEmail).toHaveBeenCalled();
   });
 });

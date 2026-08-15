@@ -18,6 +18,8 @@ function candidate(over: Partial<ResumeCandidate> = {}): ResumeCandidate {
     paidAt: null,
     createdAt: minutesAgo(60),
     scheduledAt: minutesAgo(30),
+    resumeEmailSentAt: null,
+    reachedCheckout: false,
     practitionerPayoutsEnabled: true,
     offering: {
       archived: false,
@@ -96,9 +98,37 @@ describe('resumeDecision — who gets §10’s resume email', () => {
   });
 
   // State (a) gets NO buyer email — it is a lead, not an abandoned checkout.
-  it.each(['PENDING', 'ABANDONED', 'PAID'])('never emails a %s intent', (status) => {
+  it.each(['PENDING', 'ABANDONED', 'PAID'])('never emails a %s intent that never reached checkout', (status) => {
     const r = resumeDecision(candidate({ status }), NOW);
     expect(r.send).toBe(false);
+  });
+
+  // §5's "subscription / no scheduling" row (1 → 3). These buyers never pass a scheduler, so
+  // their status stays PENDING even after they open a real Whop checkout and walk away — the
+  // textbook state (b). Keying on status alone left the highest-value path with NO recovery, and
+  // then filed those buyers as ABANDONED claiming they never reached a checkout.
+  it('emails the no-scheduler cohort, whose status never leaves PENDING', () => {
+    const r = resumeDecision(
+      candidate({ status: 'PENDING', scheduledAt: null, reachedCheckout: true }),
+      NOW,
+    );
+    expect(r).toEqual({ send: true });
+  });
+
+  it('does not email a PENDING intent that never got as far as a checkout', () => {
+    const r = resumeDecision(
+      candidate({ status: 'PENDING', scheduledAt: null, reachedCheckout: false }),
+      NOW,
+    );
+    expect(r).toEqual({ send: false, reason: 'never-reached-checkout' });
+  });
+
+  // Resend's key de-duplicates for 24h and nothing else ever removes an unpaid intent from the
+  // candidate set — so without this marker a buyer who decided not to buy is chased DAILY,
+  // forever, from a sending domain whose deliverability was hard-won.
+  it('never sends a second resume email, however long the intent stays unpaid', () => {
+    const r = resumeDecision(candidate({ resumeEmailSentAt: minutesAgo(60 * 24 * 30) }), NOW);
+    expect(r).toEqual({ send: false, reason: 'already-sent' });
   });
 
   it('never emails an intent the webhook already marked paid, whatever its status says', () => {
@@ -152,6 +182,20 @@ describe('resumeCopy', () => {
     expect(copy.text).toContain('still open');
   });
 
+  it('escapes the buyer-supplied first name in the HTML part', () => {
+    // firstName comes from the untrusted public capture form via name.split(' ')[0]. Every other
+    // field in this template was escaped and this one was not.
+    const c = resumeCopy({
+      firstName: '<b>Tom</b> & Jerry',
+      practitionerName: 'X',
+      offeringTitle: 'Y',
+      resumeUrl: 'https://e.com/z',
+    });
+    expect(c.html).not.toContain('<b>Tom</b>');
+    expect(c.html).toContain('&lt;b&gt;');
+    expect(c.html).toContain('&amp;');
+  });
+
   it('degrades to a bare greeting rather than "Hi ," when there is no first name', () => {
     const c = resumeCopy({
       firstName: '',
@@ -176,6 +220,16 @@ describe('scheduledNoticeCopy — §8’s visible uncertainty', () => {
   it('tells the practitioner an ASSUMED booking is unconfirmed', () => {
     const c = scheduledNoticeCopy({ ...base, signal: 'ASSUMED' });
     expect(c.text).toContain('without confirming');
+  });
+
+  // The SUBJECT is what appears in inbox lists, push notifications and lock screens, and is often
+  // the only part read — so it has to hedge too, not just the body.
+  it('hedges in the SUBJECT for an ASSUMED signal, not only in the body', () => {
+    const assumed = scheduledNoticeCopy({ ...base, signal: 'ASSUMED' });
+    const reported = scheduledNoticeCopy({ ...base, signal: 'SELF_REPORT' });
+    expect(assumed.subject).toContain('may have booked');
+    expect(reported.subject).not.toContain('may have');
+    expect(reported.subject).toContain('booked a time');
   });
 
   it('does not describe a SELF_REPORT as calendar-confirmed', () => {
