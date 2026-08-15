@@ -495,6 +495,22 @@ model BookingIntent {
   phone String?
   note  String?
 
+  /// `chs_…` — the Whop checkout session minted for THIS intent. Stored so the session is minted
+  /// once rather than on every render of a public page, and so a buyer who refreshes mid-payment
+  /// is handed the SAME session instead of a fresh one to pay through twice. Null until checkout
+  /// is first rendered.
+  whopCheckoutSessionId String?
+  /// Whop's own `expires_at` for that session, copied verbatim rather than guessed at.
+  ///
+  /// A session is NOT durable: the live API returns `expires_at` exactly 24h after mint (probed
+  /// 2026-08-15). Storing the id with no expiry meant §10's abandonment email — which by design
+  /// brings a buyer back HOURS or days later — would remount a dead session and dead-end the one
+  /// buyer we had already lost once. Past this instant the intent re-mints.
+  whopCheckoutSessionExpiresAt DateTime?
+  /// Set by the `payment.succeeded` webhook, which is the AUTHORITY for payment — never by a
+  /// client callback. Its presence is what makes marking PAID idempotent.
+  paidAt                DateTime?
+
   status         BookingIntentStatus @default(PENDING)
   /// Null until step 2 is passed. See ScheduleSignal — ASSUMED is a valid, expected outcome.
   scheduleSignal ScheduleSignal?

@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   upsert: vi.fn<(args: UpsertArgs) => Promise<{ id: string } | null>>(),
   eventUpdate: vi.fn<(args: unknown) => Promise<unknown>>(),
   indexPractitioner: vi.fn<(id: string) => Promise<void>>(),
+  intentUpdateMany: vi.fn<(args: unknown) => Promise<{ count: number }>>(),
+  intentFindUnique:
+    vi.fn<(args: unknown) => Promise<{ id: string; practitionerId: string; paidAt: Date | null } | null>>(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -30,6 +33,10 @@ vi.mock('@/lib/prisma', () => ({
     whopWebhookEvent: {
       upsert: mocks.upsert,
       update: mocks.eventUpdate,
+    },
+    bookingIntent: {
+      updateMany: mocks.intentUpdateMany,
+      findUnique: mocks.intentFindUnique,
     },
   },
 }));
@@ -449,5 +456,149 @@ describe('unattributable events must not look healthy', () => {
     expect(mocks.eventUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ error: null }) }),
     );
+  });
+});
+
+describe('payment.succeeded — the AUTHORITY for payment (§17.3c)', () => {
+  // Until this existed the handler returned null and the ONLY writer of PAID was a public
+  // unauthenticated server action taking the two values printed in the booking URL. Three
+  // docstrings claimed "the webhook is the authority" while it was an explicit no-op.
+  // The payer MUST resolve here. An earlier version of this block left the default
+  // `findUnique -> null` in place, so resolvePractitioner returned null, the ownership check was
+  // skipped in every single test, and the whole describe passed identically whether that check
+  // worked or was deleted. A stub weaker than production asserts nothing.
+  beforeEach(() => {
+    mocks.intentUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.intentFindUnique.mockResolvedValue({ id: 'int_1', practitionerId: 'prac_1', paidAt: null });
+    mocks.findUnique.mockResolvedValue(fakePractitioner({ id: 'prac_1', whopCompanyId: 'biz_1' }));
+  });
+
+  function errorRecorded(fragment: string): boolean {
+    return mocks.eventUpdate.mock.calls.some((c) => JSON.stringify(c[0]).includes(fragment));
+  }
+
+  it('marks the intent PAID from the session metadata', async () => {
+    const res = await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { booking_intent_id: 'int_1' } },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    expect(res.status).toBe(200);
+    const args = mocks.intentUpdateMany.mock.calls[0]![0] as {
+      where: { id: string; paidAt: null };
+      data: { status: string };
+    };
+    expect(args.where.id).toBe('int_1');
+    expect(args.data.status).toBe('PAID');
+    // paidAt: null is the IDEMPOTENCY guard — Whop retries 3x over ~70s.
+    expect(args.where.paidAt).toBeNull();
+  });
+
+  it.each([
+    ['checkout_session', { checkout_session: { metadata: { booking_intent_id: 'int_2' } } }],
+    ['membership', { membership: { metadata: { booking_intent_id: 'int_2' } } }],
+  ])('finds the id nested under %s — a miss here fails SILENTLY', async (_where, data) => {
+    await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', ...data },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    const args = mocks.intentUpdateMany.mock.calls[0]![0] as { where: { id: string } };
+    expect(args.where.id).toBe('int_2');
+  });
+
+  it('ignores a payment with no booking intent — Layer X subscriptions legitimately have none', async () => {
+    const res = await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1' },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.intentUpdateMany).not.toHaveBeenCalled();
+    expect(errorRecorded('attributable to no booking')).toBe(false);
+  });
+
+  // The §8 hosted-checkout fallback is minted from the offering's checkout CONFIGURATION, whose
+  // metadata carries practitioner_id and offering_id but never booking_intent_id. So a real buyer
+  // can pay for real and reconcile to nothing. `offering_id` is what tells this apart from a
+  // Layer X subscription — without the distinction the row shows healthy green with error null,
+  // which is the exact silent failure `unresolved()` exists to prevent, on the event that moves
+  // the most money.
+  it('reports a Layer Y payment that carried no booking_intent_id — it is NOT a benign Layer X row', async () => {
+    const res = await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { offering_id: 'off_1', practitioner_id: 'prac_1' } },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.intentUpdateMany).not.toHaveBeenCalled();
+    expect(errorRecorded('attributable to no booking')).toBe(true);
+  });
+
+  // booking_intent_id is attacker-chosen metadata on a checkout session, and intent ids are
+  // timestamp-prefixed cuids. Without this check a connected practitioner could pay $1 against a
+  // rival's intent id, flip it to PAID, and permanently dead-end that buyer (the flow's settled
+  // branch gates the whole render) while the real practitioner never collects.
+  it('REFUSES to mark PAID when the paying company is not the intent’s practitioner', async () => {
+    mocks.findUnique.mockResolvedValue(fakePractitioner({ id: 'prac_ATTACKER', whopCompanyId: 'biz_evil' }));
+    const res = await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { booking_intent_id: 'int_1' } },
+        company_id: 'biz_evil',
+      }) as unknown as NextRequest,
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.intentUpdateMany).not.toHaveBeenCalled();
+    expect(errorRecorded('belongs to a different practitioner')).toBe(true);
+  });
+
+  // Deliberate, and the reason the check is conditional: this guard must never become a way to
+  // DROP a real payment. An event we cannot attribute to any company is passed through and paid.
+  it('still records payment when the payer cannot be resolved at all', async () => {
+    mocks.findUnique.mockResolvedValue(null);
+    await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { booking_intent_id: 'int_1' } },
+        company_id: 'biz_unknown',
+      }) as unknown as NextRequest,
+    );
+    expect(mocks.intentUpdateMany).toHaveBeenCalled();
+  });
+
+  it('reports LOUDLY when money moved against an intent we do not have', async () => {
+    mocks.intentFindUnique.mockResolvedValue(null);
+    await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { booking_intent_id: 'ghost' } },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    expect(mocks.intentUpdateMany).not.toHaveBeenCalled();
+    // Recorded on the audit row's `error` column rather than swallowed.
+    expect(errorRecorded('unknown booking intent')).toBe(true);
+  });
+
+  it('does NOT re-record an already-paid intent (a Whop retry is expected, not an error)', async () => {
+    mocks.intentUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { booking_intent_id: 'int_1' } },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    expect(res.status).toBe(200);
+    expect(errorRecorded('unknown booking intent')).toBe(false);
   });
 });

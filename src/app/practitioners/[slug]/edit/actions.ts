@@ -1133,6 +1133,24 @@ export async function openPayoutPortal(slug: string): Promise<void> {
   redirect(linkUrl ?? `/practitioners/${slug}/edit?whop=error#payments`);
 }
 
+/**
+ * Drop stored checkout sessions for an offering whose Whop configuration just changed.
+ *
+ * A stored session is pinned to the configuration it was minted against, so once that
+ * configuration is replaced (re-publish) or retired (unpublish) the session is a live payment path
+ * the practitioner believes is gone — at the old price, after a price edit. Nulling it makes the
+ * flow re-mint against whatever is current.
+ *
+ * Scoped to UNSETTLED intents only. A paid intent's session id is a historical record of how money
+ * moved and must not be rewritten.
+ */
+async function clearStaleCheckoutSessions(offeringId: string): Promise<void> {
+  await prisma.bookingIntent.updateMany({
+    where: { offeringId, paidAt: null, whopCheckoutSessionId: { not: null } },
+    data: { whopCheckoutSessionId: null, whopCheckoutSessionExpiresAt: null },
+  });
+}
+
 export async function publishOffering(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
   const offeringId = String(formData.get('offeringId') ?? '');
@@ -1167,6 +1185,7 @@ export async function publishOffering(slug: string, formData: FormData): Promise
   }
 
   let ok = false;
+  let noPlan = false;
   try {
     const result = await createOfferingCheckout({
       companyId: practitioner.whopCompanyId,
@@ -1178,6 +1197,10 @@ export async function publishOffering(slug: string, formData: FormData): Promise
       interval: offering.interval,
       applicationFeeCents: offering.applicationFeeCents,
     });
+    // ALWAYS persist what Whop created, even when the plan id is missing. The product, plan and
+    // checkout configuration already exist on the practitioner's connected account by this point;
+    // discarding the ids would orphan them beyond the reach of unpublishOffering (which only
+    // nulls local columns), and every retry would mint another orphan set.
     await prisma.whopProduct.update({
       where: { id: offering.id },
       data: {
@@ -1186,11 +1209,36 @@ export async function publishOffering(slug: string, formData: FormData): Promise
         purchaseUrl: result.purchaseUrl,
       },
     });
-    ok = true;
+
+    // A null plan id is a PUBLISH FAILURE. `createOfferingCheckout` returns `cfg.plan?.id ?? null`
+    // and Whop does not contractually guarantee it — and since §17.3c's embedded checkout is
+    // addressed BY plan id, treating null as success would move the problem to buyer time: a
+    // listed offering with a live Buy CTA and no renderable checkout.
+    //
+    // Signalled with a specific error CODE, matching every other failure in this action. A
+    // `USER:`-prefixed throw would have been swallowed by the catch below and surfaced as the
+    // generic ?whop=error banner in a different section — extractError() is never involved here,
+    // because publishOffering is not wrapped by anything that reads the convention.
+    //
+    // Set a FLAG rather than redirecting here. `redirect()` signals by throwing NEXT_REDIRECT, so
+    // calling it inside this try would have it caught by the catch two lines below, logged as a
+    // Whop failure, and converted into the generic banner in the wrong section — making the
+    // dedicated one unreachable. Same rule as the comment 160 lines above: redirect AFTER the
+    // try/catch, never inside it.
+    noPlan = !result.planId;
+    ok = !noPlan;
   } catch (err) {
     console.error('Whop publish offering failed:', err);
   }
+  if (noPlan) redirect(`/practitioners/${slug}/edit?error=offering-no-plan#offerings`);
   if (!ok) redirect(`/practitioners/${slug}/edit?whop=error#offerings`);
+
+  // A re-publish mints a FRESH checkout configuration (createOfferingCheckout treats the result as
+  // derived and disposable), so any session already minted against the old one now points at a
+  // superseded configuration — and would charge the OLD price after a price edit. Drop them; the
+  // flow re-mints on next render. Settled intents are left alone: their session is history, not a
+  // live payment path.
+  await clearStaleCheckoutSessions(offering.id);
 
   revalidatePath(`/practitioners/${slug}`);
   revalidatePath(`/practitioners/${slug}/edit`);
@@ -1203,10 +1251,13 @@ export async function unpublishOffering(slug: string, formData: FormData): Promi
   // No Whop call — there is no delete endpoint for a checkout configuration, it simply stops
   // being surfaced once the public Buy button's fields are cleared.
   if (id) {
-    await prisma.whopProduct.updateMany({
+    const cleared = await prisma.whopProduct.updateMany({
       where: { id, practitionerId: target.id },
       data: { whopCheckoutConfigId: null, whopPlanId: null, purchaseUrl: null },
     });
+    // Only after the ownership-scoped update actually matched — otherwise an id belonging to
+    // someone else would let a practitioner wipe another practitioner's in-flight sessions.
+    if (cleared.count > 0) await clearStaleCheckoutSessions(id);
   }
   revalidatePath(`/practitioners/${slug}`);
   revalidatePath(`/practitioners/${slug}/edit`);

@@ -281,6 +281,16 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             </p>
           </Card>
         )}
+        {searchParams.error === 'offering-no-plan' && (
+          <Card className="border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive">
+              Whop set that offering up but didn&apos;t return a payment plan for it, so checkout
+              can&apos;t be shown to clients yet. Try publishing again — nothing was charged and
+              nothing was lost.
+            </p>
+          </Card>
+        )}
+
         {searchParams.error === 'offering-title-too-long' && (
           <Card className="border-destructive/30 bg-destructive/5 p-3">
             <p className="text-xs text-destructive">

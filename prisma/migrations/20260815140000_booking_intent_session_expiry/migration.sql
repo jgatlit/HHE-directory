@@ -1,0 +1,12 @@
+-- Whop's own `expires_at` for the stored checkout session, copied verbatim rather than guessed.
+--
+-- A checkout session is NOT durable. Probing the live API on 2026-08-15 returned
+-- `expires_at` exactly 24h after mint. The previous migration stored the session id with no
+-- expiry and re-used it unconditionally, which is correct for a refresh but wrong for the case
+-- §10 is built around: an abandonment email deliberately brings a buyer back hours or days later,
+-- and would have remounted a dead session — dead-ending the one buyer we had already lost once,
+-- with no automatic fallback.
+--
+-- Additive and nullable. Rows minted before this column exists read NULL, which the application
+-- treats as "unknown age, re-mint" rather than "never expires".
+ALTER TABLE "BookingIntent" ADD COLUMN "whopCheckoutSessionExpiresAt" TIMESTAMP(3);

@@ -349,6 +349,53 @@ export async function createOfferingCheckout(params: {
   return { checkoutConfigId: cfg.id, planId: cfg.plan?.id ?? null, purchaseUrl };
 }
 
+/**
+ * Mint a checkout session for ONE booking (§17.3c, operator decision (a) 2026-08-13).
+ *
+ * A fresh session per booking rather than reusing the offering's checkout configuration, because
+ * the configuration is minted ONCE at publish time — every buyer would share it, and
+ * `booking_intent_id` could never be attached. That id is what lets `payment.succeeded` reconcile
+ * to a BookingIntent SERVER-SIDE, independent of whether the client `onComplete` callback ever
+ * fires. The extra call was accepted knowingly.
+ *
+ * This is the shape Layer X got wrong: it resolves payers by EMAIL, which silently misattributes
+ * anyone paying from a different address than their profile. Do not repeat it here.
+ *
+ * VERIFIED LIVE 2026-08-15 against the operator's own test plan:
+ * - `POST /v1/checkout_sessions` is the route. `/v2/checkout_sessions` 404s — it resolves the path
+ *   segment as a plan id ("No such Plan found with the provided ID: checkout_sessions").
+ * - It requires a mount source: exactly one of `items`, `checkout_configuration` or `link`. We
+ *   mount the offering's existing configuration, so pricing stays defined in one place.
+ * - Metadata MERGES: the session inherits the configuration's `{practitioner_id, offering_id}`
+ *   and carries ours on top, so all three ids arrive together on the webhook.
+ * - ⚠️ The session's own `redirect_url` is OVERRIDDEN by the configuration's. A per-intent return
+ *   URL cannot be expressed here — it goes on the EMBED's `returnUrl` prop instead.
+ * - The returned id is `chs_…`. That is NOT the `ch_…` configuration id; the embed's `sessionId`
+ *   prop needs this one.
+ * - Sessions expire (~24h), which is why one is minted when checkout renders rather than at
+ *   capture: an intent resumed from a §10 email a day later would otherwise carry a dead session.
+ */
+export async function createBookingCheckoutSession(params: {
+  checkoutConfigurationId: string;
+  bookingIntentId: string;
+}): Promise<{ sessionId: string; expiresAt: Date | null }> {
+  const session = await whopPost<{ id: string; expires_at?: unknown }>(
+    '/checkout_sessions',
+    {
+      checkout_configuration: params.checkoutConfigurationId,
+      metadata: { booking_intent_id: params.bookingIntentId },
+    },
+    'create booking checkout session',
+  );
+  // Whop's own expiry, returned verbatim rather than assumed — a session is short-lived (probed
+  // live 2026-08-15: exactly 24h), and the caller stores this so an abandonment email hours later
+  // re-mints instead of remounting a dead session. Null when absent or unparseable, which the
+  // caller must read as "unknown age" — never as "does not expire".
+  const raw = typeof session.expires_at === 'string' ? new Date(session.expires_at) : null;
+  const expiresAt = raw && !Number.isNaN(raw.getTime()) ? raw : null;
+  return { sessionId: session.id, expiresAt };
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Webhooks
 // ──────────────────────────────────────────────────────────────────────────────
