@@ -5,9 +5,26 @@ export type CaptureInput = {
   note: string;
 };
 
+/**
+ * Error CODES, not messages. The capture page renders these through this fixed lookup, so a
+ * crafted `?error=` cannot place attacker-chosen text inside a branded alert on a public page
+ * carrying the practitioner's real name — that is a phishing surface reachable by link alone.
+ */
+export const CAPTURE_ERRORS = {
+  NAME_REQUIRED: 'Please enter your name.',
+  NAME_TOO_LONG: 'That name is too long.',
+  EMAIL_INVALID: 'Please enter a valid email address.',
+  PHONE_TOO_LONG: 'That phone number is too long.',
+  NOTE_TOO_LONG: 'Please shorten your note.',
+  CONTEXT_GONE: 'That option is no longer available — please pick again from the profile.',
+  TOO_MANY: 'Too many attempts just now. Please try again in a few minutes.',
+} as const;
+
+export type CaptureErrorCode = keyof typeof CAPTURE_ERRORS;
+
 export type CaptureResult =
   | { ok: true; value: { name: string; email: string; phone: string | null; note: string | null } }
-  | { ok: false; error: string };
+  | { ok: false; code: CaptureErrorCode };
 
 /** Field caps. A public unauthenticated write must bound what it will store, independently of
  *  any rate limiter — see the note on enforcement in the capture action. */
@@ -30,33 +47,18 @@ export function parseCapture(input: CaptureInput): CaptureResult {
   const phone = input.phone.trim();
   const note = input.note.trim();
 
-  if (!name) return { ok: false, error: 'USER:Please enter your name.' };
-  if (name.length > CAPTURE_LIMITS.name) return { ok: false, error: 'USER:That name is too long.' };
+  if (!name) return { ok: false, code: 'NAME_REQUIRED' };
+  if (name.length > CAPTURE_LIMITS.name) return { ok: false, code: 'NAME_TOO_LONG' };
 
   // Deliberately permissive. An over-strict pattern rejects real addresses (plus-tags, new TLDs,
   // unicode domains) and the cost of a false reject here is a lost lead — the exact thing this
   // step exists to prevent. Deliverability is proven by the practitioner replying, not by a regex.
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > CAPTURE_LIMITS.email) {
-    return { ok: false, error: 'USER:Please enter a valid email address.' };
+    return { ok: false, code: 'EMAIL_INVALID' };
   }
 
-  if (phone.length > CAPTURE_LIMITS.phone) return { ok: false, error: 'USER:That phone number is too long.' };
-  if (note.length > CAPTURE_LIMITS.note) return { ok: false, error: 'USER:Please shorten your note.' };
+  if (phone.length > CAPTURE_LIMITS.phone) return { ok: false, code: 'PHONE_TOO_LONG' };
+  if (note.length > CAPTURE_LIMITS.note) return { ok: false, code: 'NOTE_TOO_LONG' };
 
   return { ok: true, value: { name, email, phone: phone || null, note: note || null } };
-}
-
-/**
- * Window within which a repeat submission REUSES the existing intent instead of creating a row.
- *
- * Two jobs. It makes the capture step idempotent, so a double-submit or a browser retry does not
- * hand the practitioner the same lead twice. And it bounds row creation per (practitioner, email)
- * without depending on the rate limiter — which currently no-ops in production because no KV
- * store is provisioned, so it is the only bound that actually holds today.
- */
-export const CAPTURE_DEDUPE_WINDOW_MS = 30 * 60 * 1000;
-
-/** True when an existing PENDING intent is recent enough to resume rather than duplicate. */
-export function isResumable(createdAt: Date, now: Date): boolean {
-  return now.getTime() - createdAt.getTime() < CAPTURE_DEDUPE_WINDOW_MS;
 }

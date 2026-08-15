@@ -4,13 +4,21 @@ import { ArrowLeft } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
 import { listedWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
-import { CAPTURE_LIMITS } from '@/lib/booking-intent';
+import { CAPTURE_LIMITS, CAPTURE_ERRORS, type CaptureErrorCode } from '@/lib/booking-intent';
 import { startBookingIntent } from './actions';
-import { BookingCaptureSubmit } from '@/components/booking/BookingCaptureSubmit';
+import { PendingButton } from '@/components/practitioners/PendingButton';
 
 type Props = {
   params: { slug: string };
-  searchParams: { link?: string; offering?: string; error?: string };
+  searchParams: {
+    link?: string;
+    offering?: string;
+    error?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    note?: string;
+  };
 };
 
 // Reads searchParams and the live listing gate; there is nothing cacheable here.
@@ -36,25 +44,30 @@ export default async function BookCapturePage({ params, searchParams }: Props) {
   // resolve is a BROKEN LINK, not a reason to silently downgrade the buyer into a different flow
   // — quietly dropping an offering id would turn a paid booking into a free consultation.
   // IDOR discipline: "does not exist" and "belongs to someone else" produce one identical 404.
-  const offering = searchParams.offering
-    ? await prisma.whopProduct.findFirst({
-        where: {
-          id: searchParams.offering,
-          practitionerId: practitioner.id,
-          archived: false,
-        },
-        select: { id: true, title: true, priceUsdCents: true, isConsult: true, bookingLinkId: true },
-      })
-    : null;
+  const [offering, bookingLink] = await Promise.all([
+    searchParams.offering
+      ? prisma.whopProduct.findFirst({
+          where: { id: searchParams.offering, practitionerId: practitioner.id, archived: false },
+          select: { id: true, title: true },
+        })
+      : null,
+    searchParams.link
+      ? prisma.bookingLink.findFirst({
+          where: { id: searchParams.link, practitionerId: practitioner.id },
+          select: { id: true, label: true },
+        })
+      : null,
+  ]);
   if (searchParams.offering && !offering) notFound();
-
-  const bookingLink = searchParams.link
-    ? await prisma.bookingLink.findFirst({
-        where: { id: searchParams.link, practitionerId: practitioner.id },
-        select: { id: true, label: true, ctaLabel: true },
-      })
-    : null;
   if (searchParams.link && !bookingLink) notFound();
+
+  // Rendered through a FIXED LOOKUP — never the raw parameter. Echoing arbitrary text into a
+  // branded alert on a public page carrying the practitioner's name is a phishing surface
+  // reachable by link alone.
+  const errorMessage =
+    searchParams.error && searchParams.error in CAPTURE_ERRORS
+      ? CAPTURE_ERRORS[searchParams.error as CaptureErrorCode]
+      : null;
 
   const action = startBookingIntent.bind(null, params.slug);
   const subject = offering?.title ?? bookingLink?.label ?? null;
@@ -81,12 +94,12 @@ export default async function BookCapturePage({ params, searchParams }: Props) {
           </p>
         </div>
 
-        {searchParams.error && (
+        {errorMessage && (
           <p
             role="alert"
             className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
           >
-            {searchParams.error}
+            {errorMessage}
           </p>
         )}
 
@@ -103,6 +116,7 @@ export default async function BookCapturePage({ params, searchParams }: Props) {
               name="name"
               required
               maxLength={CAPTURE_LIMITS.name}
+              defaultValue={searchParams.name ?? ''}
               autoComplete="name"
               className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
             />
@@ -115,6 +129,7 @@ export default async function BookCapturePage({ params, searchParams }: Props) {
               name="email"
               required
               maxLength={CAPTURE_LIMITS.email}
+              defaultValue={searchParams.email ?? ''}
               autoComplete="email"
               className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
             />
@@ -128,6 +143,7 @@ export default async function BookCapturePage({ params, searchParams }: Props) {
               type="tel"
               name="phone"
               maxLength={CAPTURE_LIMITS.phone}
+              defaultValue={searchParams.phone ?? ''}
               autoComplete="tel"
               className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
             />
@@ -142,13 +158,21 @@ export default async function BookCapturePage({ params, searchParams }: Props) {
               name="note"
               rows={3}
               maxLength={CAPTURE_LIMITS.note}
+              defaultValue={searchParams.note ?? ''}
               className="w-full rounded-md border bg-card px-3 py-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
             />
           </label>
 
           {/* Four fields, deliberately. This is lead capture, NOT intake — the practitioner's own
               scheduler asks its own questions at the next step, and §6 forbids duplicating them. */}
-          <BookingCaptureSubmit />
+          {/* The repo's existing pending primitive rather than a second copy of it — it also
+              sets aria-busy, which a bespoke duplicate dropped. */}
+          <PendingButton
+            pendingLabel="Saving your details…"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+          >
+            Continue
+          </PendingButton>
         </form>
       </Card>
     </main>

@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Check, CalendarClock } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
+import { listedWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
 
 type Props = { params: { slug: string; intentId: string } };
@@ -26,18 +27,29 @@ export default async function BookingFlowPage({ params }: Props) {
   // render one practitioner's lead under another's profile URL. IDOR discipline — a mismatch and
   // a missing row produce one identical 404.
   const intent = await prisma.bookingIntent.findFirst({
-    where: { id: params.intentId, practitioner: { slug: params.slug } },
+    // The LISTING GATE belongs here too. Both the capture page and the capture action apply it,
+    // and omitting it left a bookmarked flow URL serving a delisted or trial-expired
+    // practitioner's calendar indefinitely — widening the paywall hole over time, since §10's
+    // resume email is specced to point at exactly this URL.
+    where: {
+      id: params.intentId,
+      practitioner: { slug: params.slug, ...listedWhere() },
+    },
     select: {
       id: true,
       name: true,
       status: true,
-      entryPoint: true,
       practitioner: { select: { slug: true, displayName: true } },
-      offering: { select: { title: true, priceUsdCents: true, isConsult: true } },
-      bookingLink: { select: { url: true, label: true, provider: true } },
+      offering: { select: { title: true } },
+      bookingLink: { select: { url: true, label: true } },
     },
   });
   if (!intent) notFound();
+
+  // `status` was queried and ignored, so a PAID or ABANDONED intent rendered the identical
+  // "we have your details, pick a time" screen — inviting a second booking of a session the
+  // buyer already holds, or reviving an intent the §10 sweep had already written off.
+  const settled = intent.status === 'PAID';
 
   return (
     <main className="mx-auto max-w-lg px-4 py-10 sm:py-14">
@@ -59,7 +71,12 @@ export default async function BookingFlowPage({ params }: Props) {
         {/* Step 2 lands in §17.3b. Until it does, the buyer is handed the practitioner's own
             scheduler directly rather than a dead end — the lead is already captured, so this
             degrades to exactly the behaviour the profile had before the flow existed. */}
-        {intent.bookingLink?.url ? (
+        {settled ? (
+          <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+            This booking is already complete — nothing further to do. If you need to change it,
+            contact {intent.practitioner.displayName} directly.
+          </p>
+        ) : intent.bookingLink?.url ? (
           <div className="space-y-2 rounded-md border bg-muted/20 p-3">
             <p className="flex items-center gap-1.5 text-xs font-medium">
               <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />

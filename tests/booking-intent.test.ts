@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseCapture,
-  isResumable,
   CAPTURE_LIMITS,
-  CAPTURE_DEDUPE_WINDOW_MS,
+  CAPTURE_ERRORS,
   type CaptureInput,
 } from '@/lib/booking-intent';
 
@@ -20,7 +19,7 @@ describe('parseCapture — required fields', () => {
   it.each([[''], ['   ']])('rejects a blank name (%s)', (name) => {
     const r = p({ name });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/^USER:/);
+    if (!r.ok) expect(r.code).toBe('NAME_REQUIRED');
   });
 
   it('rejects an unusable email', () => {
@@ -76,19 +75,27 @@ describe('parseCapture — bounds on a PUBLIC unauthenticated write', () => {
     expect(p({ note: 'n'.repeat(CAPTURE_LIMITS.note) }).ok).toBe(true);
   });
 });
-
-describe('isResumable — the bound that actually holds today', () => {
-  const now = new Date('2026-08-14T12:00:00Z');
-
-  it('resumes a recent PENDING intent instead of creating a duplicate lead', () => {
-    expect(isResumable(new Date(now.getTime() - 60_000), now)).toBe(true);
+describe('error codes, not messages', () => {
+  // The page renders these through a fixed lookup. If a code ever escaped that map the alert box
+  // would fall silent; if raw text were passed instead, the URL would become a phishing surface
+  // on a branded public page carrying the practitioner's real name.
+  it('every failure returns a code present in CAPTURE_ERRORS', () => {
+    const failures = [
+      p({ name: '' }),
+      p({ name: 'a'.repeat(CAPTURE_LIMITS.name + 1) }),
+      p({ email: 'nope' }),
+      p({ phone: '1'.repeat(CAPTURE_LIMITS.phone + 1) }),
+      p({ note: 'n'.repeat(CAPTURE_LIMITS.note + 1) }),
+    ];
+    for (const r of failures) {
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(CAPTURE_ERRORS[r.code]).toBeTruthy();
+    }
   });
 
-  it('starts fresh once the window has passed', () => {
-    expect(isResumable(new Date(now.getTime() - CAPTURE_DEDUPE_WINDOW_MS - 1), now)).toBe(false);
-  });
-
-  it('treats the boundary as expired, so the window is a strict upper bound', () => {
-    expect(isResumable(new Date(now.getTime() - CAPTURE_DEDUPE_WINDOW_MS), now)).toBe(false);
+  it('never returns a raw message the caller might echo into the page', () => {
+    const r = p({ email: 'nope' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(Object.keys(r)).toEqual(['ok', 'code']);
   });
 });
