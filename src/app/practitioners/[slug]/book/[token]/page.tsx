@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { flowShape, paymentsLive } from '@/lib/booking-flow';
 import { SchedulerStep } from '@/components/booking/SchedulerStep';
 import { recordScheduleSignal } from './actions';
-import { createBookingCheckoutSession } from '@/lib/whop';
+import { createBookingCheckoutConfig } from '@/lib/whop';
 import { CheckoutStep } from '@/components/booking/CheckoutStep';
 import { headers } from 'next/headers';
 
@@ -40,13 +40,15 @@ export default async function BookingFlowPage({ params }: Props) {
       publicToken: true,
       name: true,
       status: true,
+      practitionerId: true,
       practitioner: { select: { slug: true, displayName: true, whopPayoutsEnabled: true } },
       email: true,
       whopCheckoutSessionId: true,
-      whopCheckoutSessionExpiresAt: true,
+      whopCheckoutPurchaseUrl: true,
       paidAt: true,
       offering: {
         select: {
+          id: true,
           title: true,
           archived: true,
           acceptsPayments: true,
@@ -89,74 +91,70 @@ export default async function BookingFlowPage({ params }: Props) {
   const needsSchedule = shape.showSchedule && schedulerUrl !== null && !alreadyScheduled;
   const checkoutUrl = live ? (offering?.purchaseUrl ?? null) : null;
 
-  // Mint ONLY when the checkout step will actually render, and reuse the stored session until it
-  // expires.
+  // Mint ONE checkout configuration per booking, only when the checkout step will actually
+  // render, and reuse it forever after.
   //
   // An earlier revision minted on every render of this public force-dynamic page — including the
   // scheduler branch, which never used the result — so an ordinary refresh, prefetch or crawler
-  // drove unbounded POSTs to Whop and blocked TTFB for nothing. Worse, a buyer who refreshed
-  // mid-payment received a BRAND-NEW session, i.e. a second chargeable checkout.
+  // drove unbounded POSTs to Whop and blocked TTFB for nothing.
   //
-  // Reusing the stored session is what makes a refresh safe. But a session is NOT durable — Whop
-  // returns `expires_at` 24h out — and §10's whole purpose is to bring a buyer back LATER, so an
-  // expired-or-unknown session must re-mint rather than render a dead payment form. A null expiry
-  // means "minted before we recorded expiries", i.e. unknown age, so it re-mints too.
+  // NO EXPIRY CHECK, deliberately. The previous revision stored a `chs_` SESSION, which expires in
+  // 24h and had to be aged out. Configurations carry no `expires_at` at all, so the stored id
+  // stays valid however late §10's resume email brings the buyer back. See
+  // createBookingCheckoutConfig for why sessions were abandoned entirely — they render a 404.
   const canEmbed = live && !settled && !!offering?.whopPlanId && !!offering.whopCheckoutConfigId;
   const willRenderCheckout = canEmbed && !needsSchedule;
   // After the buyer advances past step 2 the server re-renders into the embed, so step 2 must not
   // offer the unattributed hosted link in the meantime.
   const willEmbedAfterSchedule = canEmbed && needsSchedule;
 
-  const storedExpiry = intent.whopCheckoutSessionExpiresAt;
-  const sessionUsable =
-    !!intent.whopCheckoutSessionId && storedExpiry !== null && storedExpiry.getTime() > Date.now();
-  let checkoutSessionId: string | null = sessionUsable ? intent.whopCheckoutSessionId : null;
+  let checkoutConfigId: string | null = intent.whopCheckoutSessionId;
+  let intentPurchaseUrl: string | null = intent.whopCheckoutPurchaseUrl;
 
-  if (willRenderCheckout && !checkoutSessionId) {
-    checkoutSessionId = await createBookingCheckoutSession({
-      checkoutConfigurationId: offering!.whopCheckoutConfigId!,
+  if (willRenderCheckout && !checkoutConfigId) {
+    const minted = await createBookingCheckoutConfig({
+      planId: offering!.whopPlanId!,
+      practitionerId: intent.practitionerId,
+      offeringId: offering!.id,
       bookingIntentId: intent.id,
+      slug: params.slug,
     })
-      .then(async (r) => {
-        // Guarded write, not a bare update. Two requests can reach the mint before either stores
-        // (a resume link opened twice, a double-click, a prefetch racing the navigation); a plain
-        // update would let the second overwrite the first, orphaning a chargeable session on Whop
-        // and leaving one browser holding a discarded id. Whoever writes first wins, and the
-        // loser re-reads and uses the winner's session.
-        const claimed = await prisma.bookingIntent.updateMany({
-          where: {
-            id: intent.id,
-            OR: [
-              { whopCheckoutSessionId: null },
-              { whopCheckoutSessionExpiresAt: null },
-              { whopCheckoutSessionExpiresAt: { lte: new Date() } },
-            ],
-          },
-          data: { whopCheckoutSessionId: r.sessionId, whopCheckoutSessionExpiresAt: r.expiresAt },
-        });
-        if (claimed.count > 0) return r.sessionId;
-
-        const winner = await prisma.bookingIntent.findUnique({
-          where: { id: intent.id },
-          select: { whopCheckoutSessionId: true },
-        });
-        return winner?.whopCheckoutSessionId ?? r.sessionId;
-      })
-      // Never fatal — a failed mint degrades to the hosted checkout (§8) rather than stranding a
-      // buyer who is ready to pay.
+      // Never fatal — a failed mint degrades to the offering's hosted checkout (§8) rather than
+      // stranding a buyer who is ready to pay.
       .catch((err) => {
-        console.error('[booking] checkout session mint failed', {
+        console.error('[booking] checkout config mint failed', {
           intentId: intent.id,
           error: err instanceof Error ? err.message : String(err),
         });
         return null;
       });
+
+    if (minted) {
+      // Guarded write, not a bare update. Two requests can reach the mint before either stores
+      // (a resume link opened twice, a double-click, a prefetch racing the navigation); a plain
+      // update would let the second overwrite the first and orphan a configuration on Whop.
+      // Whoever writes first wins, and the loser re-reads and uses the winner's.
+      const claimed = await prisma.bookingIntent.updateMany({
+        where: { id: intent.id, whopCheckoutSessionId: null },
+        data: {
+          whopCheckoutSessionId: minted.checkoutConfigId,
+          whopCheckoutPurchaseUrl: minted.purchaseUrl,
+        },
+      });
+      if (claimed.count > 0) {
+        checkoutConfigId = minted.checkoutConfigId;
+        intentPurchaseUrl = minted.purchaseUrl;
+      } else {
+        const winner = await prisma.bookingIntent.findUnique({
+          where: { id: intent.id },
+          select: { whopCheckoutSessionId: true, whopCheckoutPurchaseUrl: true },
+        });
+        checkoutConfigId = winner?.whopCheckoutSessionId ?? minted.checkoutConfigId;
+        intentPurchaseUrl = winner?.whopCheckoutPurchaseUrl ?? minted.purchaseUrl;
+      }
+    }
   }
 
-  // Request-scoped, so a preview deployment returns the buyer to ITSELF. SITE_URL is documented
-  // for code with no request to derive an origin from (crons, scripts) — using it here would send
-  // a buyer returning from an external wallet to production, where this intent does not exist,
-  // and 404 them mid-payment.
   const h = headers();
   const host = h.get('host') ?? 'naturalhealthpros.com';
   // Trust the proxy's own scheme header first — Vercel sets it, and it is right for every
@@ -218,7 +216,7 @@ export default async function BookingFlowPage({ params }: Props) {
             checkoutUrl={willEmbedAfterSchedule ? null : checkoutUrl}
             checkoutComing={willEmbedAfterSchedule}
           />
-        ) : canEmbed && checkoutSessionId ? (
+        ) : canEmbed && checkoutConfigId ? (
           // D11 — embedded, addressed by the SESSION, so the flow never leaves our page. Reached
           // two ways: §5's "subscription / no scheduling" row (1 → 3), and a returning buyer whose
           // intent is already SCHEDULED.
@@ -230,10 +228,13 @@ export default async function BookingFlowPage({ params }: Props) {
           // working payment form into an account that may not be able to withdraw, which
           // publishOffering's own hard gate calls the worst possible failure.
           <CheckoutStep
-            sessionId={checkoutSessionId}
+            checkoutConfigId={checkoutConfigId}
             email={intent.email}
             returnUrl={intentUrl}
-            fallbackUrl={checkoutUrl}
+            // The PER-INTENT purchase url, which carries booking_intent_id — unlike the
+            // offering-level one, which carries only practitioner_id and offering_id and would
+            // reconcile to no booking. Falls back to the offering's only if this intent has none.
+            fallbackUrl={intentPurchaseUrl ?? checkoutUrl}
           />
         ) : checkoutUrl ? (
           // §8 fallback — the session mint failed, so hand over the hosted checkout rather than

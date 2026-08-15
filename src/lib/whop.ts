@@ -350,50 +350,64 @@ export async function createOfferingCheckout(params: {
 }
 
 /**
- * Mint a checkout session for ONE booking (§17.3c, operator decision (a) 2026-08-13).
+ * Mint a per-booking checkout CONFIGURATION (§17.3c).
  *
- * A fresh session per booking rather than reusing the offering's checkout configuration, because
- * the configuration is minted ONCE at publish time — every buyer would share it, and
- * `booking_intent_id` could never be attached. That id is what lets `payment.succeeded` reconcile
- * to a BookingIntent SERVER-SIDE, independent of whether the client `onComplete` callback ever
- * fires. The extra call was accepted knowingly.
+ * ⚠️ READ THIS BEFORE SWITCHING BACK TO `/checkout_sessions`. An earlier revision minted a
+ * `chs_…` session there and passed it to the embed's `sessionId` prop, which is exactly what the
+ * library's own docstring tells you to do ("attach metadata by first creating a session through
+ * the API and then passing the session id"). **It renders Whop's 404 page.** Proven live
+ * 2026-08-15 by diffing the embed HTML for each id type:
  *
- * This is the shape Layer X got wrong: it resolves payers by EMAIL, which silently misattributes
- * anyone paying from a different address than their profile. Do not repeat it here.
+ *   /embedded/checkout/chs_…/  → 1.35MB, ZERO product data — no title, no plan, no price
+ *   /embedded/checkout/plan_…/ → 1.41MB, title + $55.00
+ *   /embedded/checkout/ch_…/   → 1.41MB, title + $55.00
  *
- * VERIFIED LIVE 2026-08-15 against the operator's own test plan:
- * - `POST /v1/checkout_sessions` is the route. `/v2/checkout_sessions` 404s — it resolves the path
- *   segment as a plan id ("No such Plan found with the provided ID: checkout_sessions").
- * - It requires a mount source: exactly one of `items`, `checkout_configuration` or `link`. We
- *   mount the offering's existing configuration, so pricing stays defined in one place.
- * - Metadata MERGES: the session inherits the configuration's `{practitioner_id, offering_id}`
- *   and carries ours on top, so all three ids arrive together on the webhook.
- * - ⚠️ The session's own `redirect_url` is OVERRIDDEN by the configuration's. A per-intent return
- *   URL cannot be expressed here — it goes on the EMBED's `returnUrl` prop instead.
- * - The returned id is `chs_…`. That is NOT the `ch_…` configuration id; the embed's `sessionId`
- *   prop needs this one.
- * - Sessions expire (~24h), which is why one is minted when checkout renders rather than at
- *   capture: an intent resumed from a §10 email a day later would otherwise carry a dead session.
+ * The `chs_` objects from `/v1/checkout_sessions` are a newer, Stripe-shaped resource (they carry
+ * a `client_secret`) that the embedded checkout iframe does not support. What the embed calls a
+ * "session" is a checkout CONFIGURATION — note its placeholder is `ch_XXXXXXXX`, and that Whop's
+ * own hosted URL is `…/checkout/plan_…/?session=ch_…` where that id is the configuration.
+ *
+ * The lesson worth keeping: the session probe verified CREATION (201, metadata merged correctly)
+ * and concluded the design was validated. Creation success is not renderability.
+ *
+ * So: one configuration per booking, bound to the offering's EXISTING plan via `plan_id`, so
+ * pricing stays defined in exactly one place and no product or plan is duplicated per buyer.
+ * `metadata` is set in full here — a fresh configuration inherits nothing, unlike a session.
+ *
+ * Two properties that a session could not give us:
+ *   - Configurations do NOT expire (no `expires_at` in the response), so a stored id survives
+ *     §10's resume email however late the buyer returns. No re-mint machinery needed.
+ *   - Each one returns its OWN `purchase_url` carrying `?session=<this config>`, so the §8
+ *     embed-failure fallback is finally ATTRIBUTABLE — it carries `booking_intent_id` like the
+ *     embed does. The offering-level `purchaseUrl` never could.
  */
-export async function createBookingCheckoutSession(params: {
-  checkoutConfigurationId: string;
+export async function createBookingCheckoutConfig(params: {
+  planId: string;
+  practitionerId: string;
+  offeringId: string;
   bookingIntentId: string;
-}): Promise<{ sessionId: string; expiresAt: Date | null }> {
-  const session = await whopPost<{ id: string; expires_at?: unknown }>(
-    '/checkout_sessions',
+  slug: string;
+}): Promise<{ checkoutConfigId: string; purchaseUrl: string | null }> {
+  const cfg = await whopPost<{ id: string; purchase_url?: string | null }>(
+    '/checkout_configurations',
     {
-      checkout_configuration: params.checkoutConfigurationId,
-      metadata: { booking_intent_id: params.bookingIntentId },
+      mode: 'payment',
+      // Reference the existing plan. `plan: "plan_…"` and `items: [{plan}]` are both rejected
+      // with parameter_invalid — `plan_id` is the accepted spelling (verified live).
+      plan_id: params.planId,
+      // All three ids, explicitly. A per-booking configuration is a NEW object and inherits no
+      // metadata from the offering's; only a session merged. Dropping the first two here would
+      // make Layer Y payments unattributable to a practitioner, which is how Layer X went wrong.
+      metadata: {
+        practitioner_id: params.practitionerId,
+        offering_id: params.offeringId,
+        booking_intent_id: params.bookingIntentId,
+      },
+      redirect_url: `${baseUrl()}/practitioners/${params.slug}?purchase=success`,
     },
-    'create booking checkout session',
+    'create booking checkout configuration',
   );
-  // Whop's own expiry, returned verbatim rather than assumed — a session is short-lived (probed
-  // live 2026-08-15: exactly 24h), and the caller stores this so an abandonment email hours later
-  // re-mints instead of remounting a dead session. Null when absent or unparseable, which the
-  // caller must read as "unknown age" — never as "does not expire".
-  const raw = typeof session.expires_at === 'string' ? new Date(session.expires_at) : null;
-  const expiresAt = raw && !Number.isNaN(raw.getTime()) ? raw : null;
-  return { sessionId: session.id, expiresAt };
+  return { checkoutConfigId: cfg.id, purchaseUrl: absoluteCheckoutUrl(cfg.purchase_url) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -6,8 +6,14 @@ import { WhopCheckoutEmbed } from '@whop/checkout/react';
 import { Check, Loader2 } from 'lucide-react';
 
 type Props = {
-  /** `chs_…` from createBookingCheckoutSession — carries booking_intent_id. */
-  sessionId: string;
+  /**
+   * `ch_…` — the per-booking checkout CONFIGURATION, carrying booking_intent_id.
+   *
+   * Passed to the embed's `sessionId` prop because that is what Whop calls a configuration there
+   * (its placeholder is `ch_XXXXXXXX`, and their hosted url is `…/checkout/plan_…/?session=ch_…`).
+   * It is NOT a `chs_…` object from /v1/checkout_sessions — those render a 404 in the iframe.
+   */
+  checkoutConfigId: string;
   /** Captured at step 1. Whop CAN lock this; Calendly cannot (§6) — so here it is authoritative. */
   email: string;
   /** Per-intent return, for the one path where the buyer genuinely leaves (external wallets). */
@@ -32,12 +38,15 @@ type Props = {
  * never happened, and permanently dead-end that buyer. It also meant a tab closed mid-redirect
  * was never recorded at all. Do not reintroduce a client-side writer here.
  *
- * NO `planId` PROP. The library builds its iframe url as `sessionId || planId` and appends
- * `?session=<sessionId>`, so a plan id passed alongside a session is dead at runtime
- * (node_modules/@whop/checkout/dist/static/checkout/react/index.js). Passing it implied the mount
- * was addressed by plan, which it is not, and made the page thread a value nothing consumed.
+ * NO `planId` PROP. The library builds its iframe url as `sessionId || planId`, so anything
+ * passed as `planId` alongside a `sessionId` is dead at runtime
+ * (node_modules/@whop/checkout/dist/static/checkout/react/index.js).
+ *
+ * ⚠️ The value handed to `sessionId` must be a `ch_…` CONFIGURATION. A `chs_…` session from
+ * /v1/checkout_sessions type-checks, mounts, and renders Whop's "Nothing to see here yet" 404 —
+ * which is what shipped to production on 2026-08-15. See createBookingCheckoutConfig.
  */
-export function CheckoutStep({ sessionId, email, returnUrl, fallbackUrl }: Props) {
+export function CheckoutStep({ checkoutConfigId, email, returnUrl, fallbackUrl }: Props) {
   const [paid, setPaid] = useState(false);
   const [failed, setFailed] = useState(false);
   const router = useRouter();
@@ -97,7 +106,7 @@ export function CheckoutStep({ sessionId, email, returnUrl, fallbackUrl }: Props
 
       <div className="overflow-hidden rounded-md border bg-card">
         <WhopCheckoutEmbed
-          sessionId={sessionId}
+          sessionId={checkoutConfigId}
           returnUrl={returnUrl}
           prefill={{ email }}
           disableEmail

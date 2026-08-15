@@ -1147,7 +1147,11 @@ export async function openPayoutPortal(slug: string): Promise<void> {
 async function clearStaleCheckoutSessions(offeringId: string): Promise<void> {
   await prisma.bookingIntent.updateMany({
     where: { offeringId, paidAt: null, whopCheckoutSessionId: { not: null } },
-    data: { whopCheckoutSessionId: null, whopCheckoutSessionExpiresAt: null },
+    data: {
+      whopCheckoutSessionId: null,
+      whopCheckoutPurchaseUrl: null,
+      whopCheckoutSessionExpiresAt: null,
+    },
   });
 }
 
