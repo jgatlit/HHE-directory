@@ -1,4 +1,10 @@
-export type PostedBookingRow = { id: string | null; label: string | null; url: string };
+export type PostedBookingRow = {
+  id: string | null;
+  label: string | null;
+  url: string;
+  /** §4 — public button text. Null falls back to the price-derived default at render time. */
+  ctaLabel: string | null;
+};
 
 /**
  * Upper bound on posted booking-link rows, enforced by the caller before parsing.
@@ -35,7 +41,7 @@ export const MAX_BOOKING_LINKS = 25;
  * this module to Next's navigation.
  */
 export function parseBookingLinkRows(
-  raw: { ids: string[]; labels: string[]; urls: string[] },
+  raw: { ids: string[]; labels: string[]; urls: string[]; ctaLabels?: string[] },
   normalize: (url: string) => string | null,
 ): PostedBookingRow[] | null {
   const rows: PostedBookingRow[] = [];
@@ -53,6 +59,8 @@ export function parseBookingLinkRows(
       id: raw.ids[i]?.trim() || null,
       label: raw.labels[i]?.trim() || null,
       url,
+      // Optional so existing callers and fixtures keep working; absent means "use the default".
+      ctaLabel: raw.ctaLabels?.[i]?.trim() || null,
     });
   }
 

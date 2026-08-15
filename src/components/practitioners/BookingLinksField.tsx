@@ -1,18 +1,19 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, ExternalLink } from 'lucide-react';
 import { SortableList } from '@/components/practitioners/SortableList';
 import { duplicateBookingRowKeys } from '@/lib/booking-links';
+import { detectProvider, extractUrlFromEmbed, withScheme, PROVIDER_LABEL } from '@/lib/booking-providers';
 
-export type BookingLinkInput = { id: string; label: string; url: string };
+export type BookingLinkInput = { id: string; label: string; url: string; ctaLabel: string };
 /**
  * `dbId` is the persisted BookingLink id — empty for a row the practitioner just added, and the
  * value posted back as `bookingId`. `id` is a render-local dnd-kit identity that never leaves the
  * browser; SortableList keys on `id`, and a database id cannot serve that role because new rows
  * do not have one yet and would all collide on the empty string.
  */
-type Row = { id: string; dbId: string; label: string; url: string };
+type Row = { id: string; dbId: string; label: string; url: string; ctaLabel: string };
 
 type Props = { initial: BookingLinkInput[] };
 
@@ -38,11 +39,12 @@ export function BookingLinksField({ initial }: Props) {
   const nextKey = useRef(0);
   const mint = () => `bl-${nextKey.current++}`;
   const [rows, setRows] = useState<Row[]>(() =>
-    (initial.length > 0 ? initial : [{ id: '', label: '', url: '' }]).map((r) => ({
+    (initial.length > 0 ? initial : [{ id: '', label: '', url: '', ctaLabel: '' }]).map((r) => ({
       id: mint(),
       dbId: r.id,
       label: r.label,
       url: r.url,
+      ctaLabel: r.ctaLabel,
     })),
   );
 
@@ -63,7 +65,7 @@ export function BookingLinksField({ initial }: Props) {
     announce();
   };
   const add = () => {
-    setRows((r) => [...r, { id: mint(), dbId: '', label: '', url: '' }]);
+    setRows((r) => [...r, { id: mint(), dbId: '', label: '', url: '', ctaLabel: '' }]);
     announce();
   };
 
@@ -90,13 +92,59 @@ export function BookingLinksField({ initial }: Props) {
                 className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
               />
               <input
-                type="url"
+                // `type="text"`, not `type="url"`: §6 accepts pasted <iframe> markup and extracts
+                // its src, and a url input would refuse to submit that before we ever see it.
+                type="text"
                 name="bookingUrl"
                 value={row.url}
                 onChange={(e) => update(row.id, { url: e.target.value })}
+                onBlur={(e) => {
+                  const cleaned = extractUrlFromEmbed(e.target.value);
+                  if (cleaned !== e.target.value) update(row.id, { url: cleaned });
+                }}
                 placeholder="https://cal.com/your-username/intro-consult"
                 className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
               />
+              <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
+                {/* Provider is DERIVED, never asked for (§6). Showing it back is how the
+                    practitioner learns we recognised their scheduler — and "Other" is a valid,
+                    working outcome (the null adapter), not an error, so it is stated plainly. */}
+                <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  {row.url.trim() ? PROVIDER_LABEL[detectProvider(row.url)] : 'No link yet'}
+                  {/* detectProvider is scheme-tolerant, so `calendly.com/x` reports CALENDLY —
+                      matching what the server persists rather than "Other". */}
+                </span>
+                <input
+                  type="text"
+                  name="bookingCtaLabel"
+                  value={row.ctaLabel}
+                  onChange={(e) => update(row.id, { ctaLabel: e.target.value })}
+                  placeholder="Button text (optional)"
+                  aria-label="Button text"
+                  className="h-8 min-w-0 flex-1 rounded-md border bg-card px-2 text-xs outline-none ring-ring/30 focus-visible:ring-2"
+                />
+                {/* §15 mechanism 2. We deliberately build NO server-side link crawler: a 200
+                    does not mean the event type still exists or is bookable, and the
+                    practitioner is the only party who can confirm the calendar is theirs
+                    and live. */}
+                <a
+                  // withScheme mirrors the server's normalisation. Using the raw value made
+                  // `as.me/sarah` resolve as a RELATIVE path — opening a 404 on our own domain
+                  // and telling the practitioner their working scheduler was broken.
+                  href={withScheme(row.url) ?? undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-disabled={!withScheme(row.url)}
+                  className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors ${
+                    withScheme(row.url)
+                      ? 'hover:bg-accent/40'
+                      : 'pointer-events-none opacity-40'
+                  }`}
+                >
+                  <ExternalLink className="h-3 w-3" aria-hidden />
+                  Test link
+                </a>
+              </div>
               {dupes.has(row.id) && (
                 <p className="text-[11px] text-muted-foreground sm:col-span-2">
                   Another link has this same name and address. That is fine if you meant it — give

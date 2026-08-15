@@ -463,6 +463,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
                   id: b.id,
                   label: b.label ?? '',
                   url: b.url,
+                  ctaLabel: b.ctaLabel ?? '',
                 }))}
               />
             </Field>
@@ -563,9 +564,23 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             priceUsdCents: o.priceUsdCents,
             interval: o.interval,
             category: o.category,
+            duration: o.duration,
+            isConsult: o.isConsult,
+            acceptsPayments: o.acceptsPayments,
+            bookingLinkId: o.bookingLinkId,
+            listingVisibility: o.listingVisibility,
+            whopPlanId: o.whopPlanId,
             purchaseUrl: o.purchaseUrl,
           }))}
           payoutsEnabled={practitioner.whopPayoutsEnabled}
+          whopConnected={practitioner.whopCompanyId != null}
+          // §12 — the "Schedule with" dropdown lists THIS practitioner's links only. D6 makes
+          // that automatic: a BookingLink is always practitioner-scoped, so a shared scheduler
+          // URL is a second row rather than a shared entity needing scoping logic here.
+          bookingLinks={practitioner.bookingLinks.map((l) => ({
+            id: l.id,
+            label: l.label?.trim() || l.url,
+          }))}
           createAction={createOfferingAction}
           updateAction={updateOfferingAction}
           deleteAction={deleteOfferingAction}

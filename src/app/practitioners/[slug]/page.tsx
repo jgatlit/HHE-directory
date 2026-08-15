@@ -29,8 +29,13 @@ async function loadPractitioner(slug: string) {
       // both already filter on it — dropping it here alone would let an archived Offering show
       // publicly while hidden from its own owner.
       //
-      // `listingVisibility` gates this grid from §17.4; the chooser deliberately ignores it (§4).
-      whopProducts: { where: { archived: false }, orderBy: OFFERING_ORDER },
+      // `listingVisibility` gates THIS GRID. The Booking Link chooser (§4, §17.4b) deliberately
+      // ignores it — that is what makes an unlisted free consult reachable there and nowhere
+      // else, and it is why one boolean could never express both layers.
+      whopProducts: {
+        where: { archived: false, listingVisibility: 'LISTED' },
+        orderBy: OFFERING_ORDER,
+      },
     },
   });
 }
