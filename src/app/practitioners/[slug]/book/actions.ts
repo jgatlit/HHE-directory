@@ -215,9 +215,13 @@ async function sendLeadEmail(params: {
     ...(params.offeringTitle ? [`Interested in: ${params.offeringTitle}`] : []),
     ...(lead.note ? ['', 'They said:', lead.note] : []),
     '',
-    // They may not have picked a time yet — that is the point of capturing first.
-    'They may still be choosing a time. Either way you have their details now.',
-    `${SITE_URL}/practitioners/${params.slug}`,
+    // States what is true AT SEND TIME and nothing more. The previous wording — "they may still
+    // be choosing a time" — was an assertion about a live state this email could never update:
+    // on the first real booking the flow took it went stale 22 seconds later, and nothing told
+    // the practitioner. The follow-up it promises is now real (see notifyScheduled).
+    'They have not picked a time yet. We will email you again if they do, and their details stay',
+    'in your dashboard either way.',
+    `${SITE_URL}/practitioners/${params.slug}/edit`,
   ];
 
   const esc = (s: string) =>
@@ -232,8 +236,8 @@ async function sendLeadEmail(params: {
       params.offeringTitle ? `<br><strong>Interested in:</strong> ${esc(params.offeringTitle)}` : ''
     }</p>
 ${lead.note ? `<p><strong>They said:</strong><br>${esc(lead.note).replace(/\n/g, '<br>')}</p>` : ''}
-<p>They may still be choosing a time. Either way you have their details now.</p>
-<p><a href="${SITE_URL}/practitioners/${encodeURIComponent(params.slug)}">View your profile</a></p>`,
+<p>They have not picked a time yet. We&rsquo;ll email you again if they do, and their details stay in your dashboard either way.</p>
+<p><a href="${SITE_URL}/practitioners/${encodeURIComponent(params.slug)}/edit">View your dashboard</a></p>`,
     // Keyed on the intent so a retry or replay cannot double-send the same lead.
     idempotencyKey: `booking-lead/${params.intentId}`,
     tags: [{ name: 'type', value: 'booking-lead' }],
