@@ -11,28 +11,33 @@ import { createBookingCheckoutSession } from '@/lib/whop';
 import { CheckoutStep } from '@/components/booking/CheckoutStep';
 import { headers } from 'next/headers';
 
-type Props = { params: { slug: string; intentId: string } };
+type Props = { params: { slug: string; token: string } };
 
 export const dynamic = 'force-dynamic';
 export const metadata = { robots: { index: false, follow: false } };
 
 /**
- * The flow shell, addressed by BookingIntent id (§5).
+ * The flow shell, addressed by BookingIntent.publicToken (§5).
  *
- * THE ID IN THE URL IS THE POINT. It is what makes returning here IDEMPOTENT, which is what lets
- * the T3 new-tab fallback and §10's resume link work at all — a buyer who leaves for their
+ * THE TOKEN IN THE URL IS THE POINT. It is what makes returning here IDEMPOTENT, which is what
+ * lets the T3 new-tab fallback and §10's resume link work at all — a buyer who leaves for their
  * scheduler, or returns from an abandonment email an hour later, lands on the same intent rather
  * than starting over or creating a second lead.
+ *
+ * It is a RANDOM token rather than the primary key precisely because it is an unauthenticated
+ * bearer credential that §10 mails out. See the column's own docstring for why a cuid was not
+ * good enough for that job.
  */
 export default async function BookingFlowPage({ params }: Props) {
-  // Scoped by slug AND through the listing gate, matching the capture page and action: the id
-  // alone is a bearer token, and without the gate a bookmarked URL would keep serving a delisted
-  // or trial-expired practitioner's calendar indefinitely. IDOR discipline — a mismatch, a
-  // missing row and an unlisted practitioner all produce one identical 404.
+  // Scoped by slug AND through the listing gate, matching the capture page and action: the token
+  // alone is a bearer credential, and without the gate a bookmarked URL would keep serving a
+  // delisted or trial-expired practitioner's calendar indefinitely. IDOR discipline — a mismatch,
+  // a missing row and an unlisted practitioner all produce one identical 404.
   const intent = await prisma.bookingIntent.findFirst({
-    where: { id: params.intentId, practitioner: { slug: params.slug, ...listedWhere() } },
+    where: { publicToken: params.token, practitioner: { slug: params.slug, ...listedWhere() } },
     select: {
       id: true,
+      publicToken: true,
       name: true,
       status: true,
       practitioner: { select: { slug: true, displayName: true, whopPayoutsEnabled: true } },
@@ -172,9 +177,9 @@ export default async function BookingFlowPage({ params }: Props) {
     : isLocal
       ? 'http'
       : 'https';
-  const intentUrl = `${proto}://${host}/practitioners/${encodeURIComponent(params.slug)}/book/${intent.id}`;
+  const intentUrl = `${proto}://${host}/practitioners/${encodeURIComponent(params.slug)}/book/${intent.publicToken}`;
 
-  const advance = recordScheduleSignal.bind(null, params.slug, intent.id);
+  const advance = recordScheduleSignal.bind(null, params.slug, intent.publicToken);
   const firstName = intent.name.split(' ')[0];
 
   return (

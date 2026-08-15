@@ -18,11 +18,11 @@ vi.mock('@/lib/rate-limit', () => ({ rateLimit: mocks.rateLimit }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/headers', () => ({ headers: () => ({ get: () => null }) }));
 
-let recordScheduleSignal: (slug: string, intentId: string, signal: string) => Promise<{ ok: boolean }>;
+let recordScheduleSignal: (slug: string, token: string, signal: string) => Promise<{ ok: boolean }>;
 
 beforeAll(async () => {
   ({ recordScheduleSignal } = await import(
-    '@/app/practitioners/[slug]/book/[intentId]/actions'
+    '@/app/practitioners/[slug]/book/[token]/actions'
   ));
 });
 
@@ -35,18 +35,18 @@ beforeEach(() => {
 describe('recordScheduleSignal — what may be written', () => {
   it('REFUSES a forged EVENT before touching the database', async () => {
     // The action is public and unauthenticated; the client-side union erases at runtime.
-    const r = await recordScheduleSignal('sarah', 'int_1', 'EVENT');
+    const r = await recordScheduleSignal('sarah', 'tok_1', 'EVENT');
     expect(r.ok).toBe(false);
     expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 
   it.each(['', 'self_report', 'PAID', 'DROP TABLE'])('refuses %s without a write', async (v) => {
-    await recordScheduleSignal('sarah', 'int_1', v);
+    await recordScheduleSignal('sarah', 'tok_1', v);
     expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 
   it.each(['SELF_REPORT', 'ASSUMED'])('accepts %s and records it', async (signal) => {
-    const r = await recordScheduleSignal('sarah', 'int_1', signal);
+    const r = await recordScheduleSignal('sarah', 'tok_1', signal);
     expect(r.ok).toBe(true);
     expect(mocks.updateMany.mock.calls[0]![0].data).toMatchObject({
       status: 'SCHEDULED',
@@ -57,9 +57,12 @@ describe('recordScheduleSignal — what may be written', () => {
 
 describe('recordScheduleSignal — scoping', () => {
   it('scopes by slug AND the listing gate, so one practitioner cannot advance another\'s intent', async () => {
-    await recordScheduleSignal('sarah', 'int_1', 'SELF_REPORT');
+    await recordScheduleSignal('sarah', 'tok_1', 'SELF_REPORT');
     const where = mocks.updateMany.mock.calls[0]![0].where as Record<string, unknown>;
-    expect(where.id).toBe('int_1');
+    // Addressed by the RANDOM publicToken, never the cuid primary key: this action is public and
+    // unauthenticated, and §10 mails these URLs out.
+    expect(where.publicToken).toBe('tok_1');
+    expect(where.id).toBeUndefined();
     const practitioner = where.practitioner as Record<string, unknown>;
     expect(practitioner.slug).toBe('sarah');
     // listedWhere() contributes the completeness + billing gate; its presence is what stops a
@@ -68,7 +71,7 @@ describe('recordScheduleSignal — scoping', () => {
   });
 
   it('advances PENDING and ABANDONED, never PAID', async () => {
-    await recordScheduleSignal('sarah', 'int_1', 'SELF_REPORT');
+    await recordScheduleSignal('sarah', 'tok_1', 'SELF_REPORT');
     const where = mocks.updateMany.mock.calls[0]![0].where as { status: { in: string[] } };
     // ABANDONED is included deliberately: §10's resume email targets exactly those intents, so
     // excluding it meant a recovered booking could never be recorded.
@@ -81,20 +84,20 @@ describe('recordScheduleSignal — scoping', () => {
 describe('recordScheduleSignal — it must never block the buyer (D8)', () => {
   it('reports ok when the row was already advanced, rather than erroring', async () => {
     mocks.updateMany.mockResolvedValue({ count: 0 });
-    const r = await recordScheduleSignal('sarah', 'int_1', 'ASSUMED');
+    const r = await recordScheduleSignal('sarah', 'tok_1', 'ASSUMED');
     expect(r.ok).toBe(true);
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
   it('is throttled — the sibling capture action is, and this one writes too', async () => {
     mocks.rateLimit.mockResolvedValue({ success: false, remaining: 0, reset: 0 });
-    const r = await recordScheduleSignal('sarah', 'int_1', 'SELF_REPORT');
+    const r = await recordScheduleSignal('sarah', 'tok_1', 'SELF_REPORT');
     expect(r.ok).toBe(false);
     expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 
   it('records an observation time, not an appointment time', async () => {
-    await recordScheduleSignal('sarah', 'int_1', 'SELF_REPORT');
+    await recordScheduleSignal('sarah', 'tok_1', 'SELF_REPORT');
     const data = mocks.updateMany.mock.calls[0]![0].data as { scheduledAt: Date };
     // We do not know when the appointment is and must not imply we do (§18).
     expect(data.scheduledAt).toBeInstanceOf(Date);
