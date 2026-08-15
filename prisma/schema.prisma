@@ -516,17 +516,24 @@ model BookingIntent {
   phone String?
   note  String?
 
-  /// `chs_…` — the Whop checkout session minted for THIS intent. Stored so the session is minted
-  /// once rather than on every render of a public page, and so a buyer who refreshes mid-payment
-  /// is handed the SAME session instead of a fresh one to pay through twice. Null until checkout
-  /// is first rendered.
-  whopCheckoutSessionId String?
-  /// Whop's own `expires_at` for that session, copied verbatim rather than guessed at.
+  /// `ch_…` — the Whop checkout CONFIGURATION minted for THIS booking, and what the embed mounts.
   ///
-  /// A session is NOT durable: the live API returns `expires_at` exactly 24h after mint (probed
-  /// 2026-08-15). Storing the id with no expiry meant §10's abandonment email — which by design
-  /// brings a buyer back HOURS or days later — would remount a dead session and dead-end the one
-  /// buyer we had already lost once. Past this instant the intent re-mints.
+  /// Name kept from when this held a `chs_…` session, to avoid a rename migration on a live table;
+  /// the contents changed when sessions turned out to render Whop's 404 page. See
+  /// `createBookingCheckoutConfig` for the evidence.
+  ///
+  /// Stored so it is minted once rather than on every render of a public page. Configurations do
+  /// NOT expire, so this stays valid however late §10's resume email brings the buyer back.
+  whopCheckoutSessionId String?
+  /// That configuration's OWN `purchase_url` — the §8 fallback when the embed cannot mount.
+  ///
+  /// Per-intent, so unlike the offering-level `purchaseUrl` it carries `booking_intent_id` and a
+  /// payment taken through it still reconciles. The offering-level one carries only
+  /// practitioner_id + offering_id, which is why a payment through it could complete and be
+  /// recorded against no booking.
+  whopCheckoutPurchaseUrl String?
+  /// DEPRECATED — sessions expired, configurations do not. Nothing reads this; dropped a release
+  /// after the currently-deployed code stops referencing it (expand/contract).
   whopCheckoutSessionExpiresAt DateTime?
   /// Set by the `payment.succeeded` webhook, which is the AUTHORITY for payment — never by a
   /// client callback. Its presence is what makes marking PAID idempotent.
