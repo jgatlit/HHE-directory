@@ -6,7 +6,10 @@ import { listedWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
 import { flowShape, paymentsLive } from '@/lib/booking-flow';
 import { SchedulerStep } from '@/components/booking/SchedulerStep';
-import { recordScheduleSignal } from './actions';
+import { recordScheduleSignal, markIntentPaid } from './actions';
+import { createBookingCheckoutSession } from '@/lib/whop';
+import { CheckoutStep } from '@/components/booking/CheckoutStep';
+import { SITE_URL } from '@/lib/site';
 
 type Props = { params: { slug: string; intentId: string } };
 
@@ -33,12 +36,14 @@ export default async function BookingFlowPage({ params }: Props) {
       name: true,
       status: true,
       practitioner: { select: { slug: true, displayName: true, whopPayoutsEnabled: true } },
+      email: true,
       offering: {
         select: {
           title: true,
           archived: true,
           acceptsPayments: true,
           whopPlanId: true,
+          whopCheckoutConfigId: true,
           purchaseUrl: true,
         },
       },
@@ -73,6 +78,27 @@ export default async function BookingFlowPage({ params }: Props) {
   // second trip through a calendar they have already used — and §10's resume email points here.
   const alreadyScheduled = intent.status === 'SCHEDULED';
   const checkoutUrl = live ? (offering?.purchaseUrl ?? null) : null;
+
+  // Minted HERE, at render, rather than at capture: sessions expire in ~24h, so an intent resumed
+  // from a §10 email a day later would otherwise carry a dead one. Never fatal — a failed mint
+  // degrades to the hosted checkout (§8) rather than stranding the buyer mid-purchase.
+  let checkoutSessionId: string | null = null;
+  if (live && !settled && offering?.whopPlanId && offering.whopCheckoutConfigId) {
+    checkoutSessionId = await createBookingCheckoutSession({
+      checkoutConfigurationId: offering.whopCheckoutConfigId,
+      bookingIntentId: intent.id,
+    })
+      .then((r) => r.sessionId)
+      .catch((err) => {
+        console.error('[booking] checkout session mint failed', {
+          intentId: intent.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      });
+  }
+  const paidAction = markIntentPaid.bind(null, params.slug, intent.id);
+  const intentUrl = `${SITE_URL}/practitioners/${encodeURIComponent(params.slug)}/book/${intent.id}`;
 
   const advance = recordScheduleSignal.bind(null, params.slug, intent.id);
   const firstName = intent.name.split(' ')[0];
@@ -109,11 +135,21 @@ export default async function BookingFlowPage({ params }: Props) {
             // Until then the existing hosted checkout is used rather than a dead end.
             checkoutUrl={checkoutUrl}
           />
+        ) : checkoutSessionId && offering?.whopPlanId ? (
+          // D11 — embedded, addressed by PLAN ID, so the flow never leaves our page. Reached two
+          // ways: §5's "subscription / no scheduling" row (1 → 3), and a returning buyer whose
+          // intent is already SCHEDULED.
+          <CheckoutStep
+            planId={offering.whopPlanId}
+            sessionId={checkoutSessionId}
+            email={intent.email}
+            returnUrl={intentUrl}
+            fallbackUrl={checkoutUrl}
+            onPaid={paidAction}
+          />
         ) : checkoutUrl ? (
-          // Reached two ways, and BOTH were previously dead ends: §5's "subscription / no
-          // scheduling" row (1 → 3, no calendar at all), and a returning buyer whose intent is
-          // already SCHEDULED. `showCheckout` was computed and tested but only ever passed into
-          // the scheduler, so neither could ever reach payment.
+          // §8 fallback — the session mint failed, so hand over the hosted checkout rather than
+          // stranding a buyer who is ready to pay.
           <div className="space-y-2 rounded-md border bg-muted/20 p-3">
             <p className="text-xs text-muted-foreground">
               {alreadyScheduled ? 'Last step — payment.' : 'No scheduling needed — just payment.'}

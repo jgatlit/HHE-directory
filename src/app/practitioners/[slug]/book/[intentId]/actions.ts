@@ -65,3 +65,37 @@ export async function recordScheduleSignal(
   // not blocked by our bookkeeping, which is the whole point of D8.
   return { ok: true };
 }
+
+/**
+ * Mark an intent PAID from the embed's `onComplete` (§9).
+ *
+ * ⚠️ THIS IS AN ACCELERATOR, NOT THE RECORD. The authority is `payment.succeeded` reconciling to
+ * the session's `booking_intent_id` server-side — a buyer who closes the tab mid-redirect never
+ * fires this callback and must still be attributed. All this does is make the UI honest
+ * immediately instead of waiting on a webhook.
+ *
+ * Only ever advances SCHEDULED or PENDING (§5: a subscription with no calendar goes 1 → 3, so
+ * PENDING is a legitimate pre-payment state). Never re-writes an already-PAID intent.
+ */
+export async function markIntentPaid(slug: string, intentId: string): Promise<{ ok: boolean }> {
+  const ip =
+    headers().get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    headers().get('x-real-ip')?.trim() ||
+    'unknown';
+  const limited = await rateLimit('booking-paid', ip, { limit: 60, windowSeconds: 600 });
+  if (!limited.success) return { ok: false };
+
+  const updated = await prisma.bookingIntent.updateMany({
+    where: {
+      id: intentId,
+      status: { in: ['PENDING', 'SCHEDULED'] },
+      practitioner: { slug, ...listedWhere() },
+    },
+    data: { status: 'PAID' },
+  });
+
+  if (updated.count > 0) revalidatePath(`/practitioners/${slug}/book/${intentId}`);
+  // count === 0 means already PAID, or not ours. Reported ok either way — the webhook is the
+  // authority and the buyer must never see an error for bookkeeping that already succeeded.
+  return { ok: true };
+}

@@ -1178,6 +1178,14 @@ export async function publishOffering(slug: string, formData: FormData): Promise
       interval: offering.interval,
       applicationFeeCents: offering.applicationFeeCents,
     });
+    // A null planId is now a PUBLISH FAILURE, not a stored null. `createOfferingCheckout` returns
+    // `cfg.plan?.id ?? null` and Whop does not contractually guarantee it — and since §17.3c's
+    // embedded checkout is addressed BY plan id, storing null would move the problem to buyer
+    // time: a listed offering with a live Buy CTA and no way to render checkout. Fail here, where
+    // the practitioner is present and the message is actionable.
+    if (!result.planId) {
+      throw new Error('USER:Whop did not return a plan for this offering. Please try again.');
+    }
     await prisma.whopProduct.update({
       where: { id: offering.id },
       data: {
