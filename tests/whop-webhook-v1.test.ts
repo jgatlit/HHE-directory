@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   upsert: vi.fn<(args: UpsertArgs) => Promise<{ id: string } | null>>(),
   eventUpdate: vi.fn<(args: unknown) => Promise<unknown>>(),
   indexPractitioner: vi.fn<(id: string) => Promise<void>>(),
+  intentUpdateMany: vi.fn<(args: unknown) => Promise<{ count: number }>>(),
+  intentFindUnique: vi.fn<(args: unknown) => Promise<{ id: string } | null>>(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -30,6 +32,10 @@ vi.mock('@/lib/prisma', () => ({
     whopWebhookEvent: {
       upsert: mocks.upsert,
       update: mocks.eventUpdate,
+    },
+    bookingIntent: {
+      updateMany: mocks.intentUpdateMany,
+      findUnique: mocks.intentFindUnique,
     },
   },
 }));
@@ -449,5 +455,91 @@ describe('unattributable events must not look healthy', () => {
     expect(mocks.eventUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ error: null }) }),
     );
+  });
+});
+
+describe('payment.succeeded — the AUTHORITY for payment (§17.3c)', () => {
+  // Until this existed the handler returned null and the ONLY writer of PAID was a public
+  // unauthenticated server action taking the two values printed in the booking URL. Three
+  // docstrings claimed "the webhook is the authority" while it was an explicit no-op.
+  beforeEach(() => {
+    mocks.intentUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.intentFindUnique.mockResolvedValue({ id: 'int_1' });
+  });
+
+  it('marks the intent PAID from the session metadata', async () => {
+    const res = await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { booking_intent_id: 'int_1' } },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    expect(res.status).toBe(200);
+    const args = mocks.intentUpdateMany.mock.calls[0]![0] as {
+      where: { id: string; paidAt: null };
+      data: { status: string };
+    };
+    expect(args.where.id).toBe('int_1');
+    expect(args.data.status).toBe('PAID');
+    // paidAt: null is the IDEMPOTENCY guard — Whop retries 3x over ~70s.
+    expect(args.where.paidAt).toBeNull();
+  });
+
+  it.each([
+    ['checkout_session', { checkout_session: { metadata: { booking_intent_id: 'int_2' } } }],
+    ['membership', { membership: { metadata: { booking_intent_id: 'int_2' } } }],
+  ])('finds the id nested under %s — a miss here fails SILENTLY', async (_where, data) => {
+    await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', ...data },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    const args = mocks.intentUpdateMany.mock.calls[0]![0] as { where: { id: string } };
+    expect(args.where.id).toBe('int_2');
+  });
+
+  it('ignores a payment with no booking intent — Layer X subscriptions legitimately have none', async () => {
+    const res = await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1' },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.intentUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('reports LOUDLY when money moved against an intent we do not have', async () => {
+    mocks.intentUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.intentFindUnique.mockResolvedValue(null);
+    await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { booking_intent_id: 'ghost' } },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    // Recorded on the audit row's `error` column rather than swallowed.
+    const errored = mocks.eventUpdate.mock.calls.some((c) =>
+      JSON.stringify(c[0]).includes('unknown booking intent'),
+    );
+    expect(errored).toBe(true);
+  });
+
+  it('does NOT re-record an already-paid intent (a Whop retry is expected, not an error)', async () => {
+    mocks.intentUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.intentFindUnique.mockResolvedValue({ id: 'int_1' });
+    const res = await POST(
+      signedRequest({
+        type: 'payment.succeeded',
+        data: { id: 'pay_1', metadata: { booking_intent_id: 'int_1' } },
+        company_id: 'biz_1',
+      }) as unknown as NextRequest,
+    );
+    expect(res.status).toBe(200);
   });
 });

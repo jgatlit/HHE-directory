@@ -6,10 +6,10 @@ import { listedWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
 import { flowShape, paymentsLive } from '@/lib/booking-flow';
 import { SchedulerStep } from '@/components/booking/SchedulerStep';
-import { recordScheduleSignal, markIntentPaid } from './actions';
+import { recordScheduleSignal } from './actions';
 import { createBookingCheckoutSession } from '@/lib/whop';
 import { CheckoutStep } from '@/components/booking/CheckoutStep';
-import { SITE_URL } from '@/lib/site';
+import { headers } from 'next/headers';
 
 type Props = { params: { slug: string; intentId: string } };
 
@@ -37,6 +37,8 @@ export default async function BookingFlowPage({ params }: Props) {
       status: true,
       practitioner: { select: { slug: true, displayName: true, whopPayoutsEnabled: true } },
       email: true,
+      whopCheckoutSessionId: true,
+      paidAt: true,
       offering: {
         select: {
           title: true,
@@ -73,22 +75,43 @@ export default async function BookingFlowPage({ params }: Props) {
   // A settled intent must not render an actionable screen: showing "pick a time" to someone who
   // already paid invites a second booking of a session they hold, and §10's resume link points
   // at this exact URL.
-  const settled = intent.status === 'PAID';
+  const settled = intent.status === 'PAID' || intent.paidAt !== null;
   // Already past step 2. Rendering the scheduler again would hide the payment CTA behind a
   // second trip through a calendar they have already used — and §10's resume email points here.
   const alreadyScheduled = intent.status === 'SCHEDULED';
+  const schedulerUrl = intent.bookingLink?.url ?? null;
+  const needsSchedule = shape.showSchedule && schedulerUrl !== null && !alreadyScheduled;
   const checkoutUrl = live ? (offering?.purchaseUrl ?? null) : null;
 
-  // Minted HERE, at render, rather than at capture: sessions expire in ~24h, so an intent resumed
-  // from a §10 email a day later would otherwise carry a dead one. Never fatal — a failed mint
-  // degrades to the hosted checkout (§8) rather than stranding the buyer mid-purchase.
-  let checkoutSessionId: string | null = null;
-  if (live && !settled && offering?.whopPlanId && offering.whopCheckoutConfigId) {
+  // Mint ONLY when the checkout step will actually render, and only ONCE per intent.
+  //
+  // An earlier revision minted on every render of this public force-dynamic page — including the
+  // scheduler branch, which never used the result — so an ordinary refresh, prefetch or crawler
+  // drove unbounded POSTs to Whop and blocked TTFB for nothing. Worse, a buyer who refreshed
+  // mid-payment received a BRAND-NEW session, i.e. a second chargeable checkout.
+  //
+  // Reusing the stored session is what makes a refresh safe: same session, so Whop can dedupe.
+  const canEmbed = live && !settled && !!offering?.whopPlanId && !!offering.whopCheckoutConfigId;
+  const willRenderCheckout = canEmbed && !needsSchedule;
+  // After the buyer advances past step 2 the server re-renders into the embed, so step 2 must not
+  // offer the unattributed hosted link in the meantime.
+  const willEmbedAfterSchedule = canEmbed && needsSchedule;
+
+  let checkoutSessionId: string | null = intent.whopCheckoutSessionId;
+  if (willRenderCheckout && !checkoutSessionId) {
     checkoutSessionId = await createBookingCheckoutSession({
-      checkoutConfigurationId: offering.whopCheckoutConfigId,
+      checkoutConfigurationId: offering!.whopCheckoutConfigId!,
       bookingIntentId: intent.id,
     })
-      .then((r) => r.sessionId)
+      .then(async (r) => {
+        await prisma.bookingIntent.update({
+          where: { id: intent.id },
+          data: { whopCheckoutSessionId: r.sessionId },
+        });
+        return r.sessionId;
+      })
+      // Never fatal — a failed mint degrades to the hosted checkout (§8) rather than stranding a
+      // buyer who is ready to pay.
       .catch((err) => {
         console.error('[booking] checkout session mint failed', {
           intentId: intent.id,
@@ -97,8 +120,14 @@ export default async function BookingFlowPage({ params }: Props) {
         return null;
       });
   }
-  const paidAction = markIntentPaid.bind(null, params.slug, intent.id);
-  const intentUrl = `${SITE_URL}/practitioners/${encodeURIComponent(params.slug)}/book/${intent.id}`;
+
+  // Request-scoped, so a preview deployment returns the buyer to ITSELF. SITE_URL is documented
+  // for code with no request to derive an origin from (crons, scripts) — using it here would send
+  // a buyer returning from an external wallet to production, where this intent does not exist,
+  // and 404 them mid-payment.
+  const host = headers().get('host') ?? 'naturalhealthpros.com';
+  const proto = host.startsWith('localhost') ? 'http' : 'https';
+  const intentUrl = `${proto}://${host}/practitioners/${encodeURIComponent(params.slug)}/book/${intent.id}`;
 
   const advance = recordScheduleSignal.bind(null, params.slug, intent.id);
   const firstName = intent.name.split(' ')[0];
@@ -126,14 +155,18 @@ export default async function BookingFlowPage({ params }: Props) {
             This booking is already complete — nothing further to do. If you need to change it,
             contact {intent.practitioner.displayName} directly.
           </p>
-        ) : shape.showSchedule && intent.bookingLink?.url && !alreadyScheduled ? (
+        ) : needsSchedule ? (
           <SchedulerStep
-            schedulerUrl={intent.bookingLink.url}
+            schedulerUrl={schedulerUrl!}
             practitionerName={intent.practitioner.displayName}
             onAdvance={advance}
-            // §17.3c replaces this with Whop's embedded checkout addressed by plan id (D11).
-            // Until then the existing hosted checkout is used rather than a dead end.
-            checkoutUrl={checkoutUrl}
+            // NULL when an embed is possible. The hosted URL carries practitioner_id and
+            // offering_id but NOT booking_intent_id, so a buyer who took it would pay through an
+            // unattributable session and never be recorded. After advancing, the step refreshes
+            // and the server renders the embedded checkout instead. The hosted link survives only
+            // where no embed can be minted (§8).
+            checkoutUrl={willEmbedAfterSchedule ? null : checkoutUrl}
+            checkoutComing={willEmbedAfterSchedule}
           />
         ) : checkoutSessionId && offering?.whopPlanId ? (
           // D11 — embedded, addressed by PLAN ID, so the flow never leaves our page. Reached two
@@ -145,7 +178,6 @@ export default async function BookingFlowPage({ params }: Props) {
             email={intent.email}
             returnUrl={intentUrl}
             fallbackUrl={checkoutUrl}
-            onPaid={paidAction}
           />
         ) : checkoutUrl ? (
           // §8 fallback — the session mint failed, so hand over the hosted checkout rather than

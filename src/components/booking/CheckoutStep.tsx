@@ -14,7 +14,6 @@ type Props = {
   returnUrl: string;
   /** Hosted checkout, used when the embed cannot mount (§8 failure table). */
   fallbackUrl: string | null;
-  onPaid: () => Promise<{ ok: boolean }>;
 };
 
 /**
@@ -24,9 +23,14 @@ type Props = {
  * because an external wallet DOES navigate away and must come back to this intent — that is the
  * one place §5's idempotent return is load-bearing, and the embed prop is what expresses it.
  *
- * The client callback is an ACCELERATOR, not the record. Payment is reconciled server-side from
- * `payment.succeeded` against the session's `booking_intent_id`, so a buyer who closes the tab
- * mid-redirect is still attributed. Marking PAID here only makes the UI honest immediately.
+ * `onComplete` IS DISPLAY ONLY — it writes nothing. Payment is recorded exclusively by the
+ * `payment.succeeded` webhook, matching the session's `booking_intent_id`, because that is the
+ * only party that can prove money moved.
+ *
+ * An earlier revision had this callback POST a public unauthenticated action that set PAID from
+ * the two values printed in the URL — so anyone holding a booking link could record a sale that
+ * never happened, and permanently dead-end that buyer. It also meant a tab closed mid-redirect
+ * was never recorded at all. Do not reintroduce a client-side writer here.
  */
 export function CheckoutStep({
   planId,
@@ -34,7 +38,6 @@ export function CheckoutStep({
   email,
   returnUrl,
   fallbackUrl,
-  onPaid,
 }: Props) {
   const [paid, setPaid] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -75,6 +78,7 @@ export function CheckoutStep({
           sessionId={sessionId}
           returnUrl={returnUrl}
           prefill={{ email }}
+          disableEmail
           theme="system"
           fallback={
             <div className="flex h-64 items-center justify-center gap-2 text-xs text-muted-foreground">
@@ -82,16 +86,9 @@ export function CheckoutStep({
               Loading secure checkout…
             </div>
           }
-          onComplete={() => {
-            // Reveal immediately; record in the background. The server-side webhook is the
-            // authority, so a failed write here must not tell a buyer their payment did not land.
-            setPaid(true);
-            onPaid().catch((err) => {
-              console.error('[booking] mark-paid failed', {
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-          }}
+          // Optimistic display only. The webhook records the payment; this just stops the buyer
+          // staring at a checkout form they have already completed while it lands.
+          onComplete={() => setPaid(true)}
         />
       </div>
 

@@ -495,6 +495,15 @@ model BookingIntent {
   phone String?
   note  String?
 
+  /// `chs_…` — the Whop checkout session minted for THIS intent. Stored so the session is minted
+  /// once rather than on every render of a public page, and so a buyer who refreshes mid-payment
+  /// is handed the SAME session (Whop can then dedupe) instead of a fresh one to pay through
+  /// twice. Null until checkout is first rendered.
+  whopCheckoutSessionId String?
+  /// Set by the `payment.succeeded` webhook, which is the AUTHORITY for payment — never by a
+  /// client callback. Its presence is what makes marking PAID idempotent.
+  paidAt                DateTime?
+
   status         BookingIntentStatus @default(PENDING)
   /// Null until step 2 is passed. See ScheduleSignal — ASSUMED is a valid, expected outcome.
   scheduleSignal ScheduleSignal?

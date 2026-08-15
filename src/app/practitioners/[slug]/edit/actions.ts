@@ -1178,14 +1178,10 @@ export async function publishOffering(slug: string, formData: FormData): Promise
       interval: offering.interval,
       applicationFeeCents: offering.applicationFeeCents,
     });
-    // A null planId is now a PUBLISH FAILURE, not a stored null. `createOfferingCheckout` returns
-    // `cfg.plan?.id ?? null` and Whop does not contractually guarantee it — and since §17.3c's
-    // embedded checkout is addressed BY plan id, storing null would move the problem to buyer
-    // time: a listed offering with a live Buy CTA and no way to render checkout. Fail here, where
-    // the practitioner is present and the message is actionable.
-    if (!result.planId) {
-      throw new Error('USER:Whop did not return a plan for this offering. Please try again.');
-    }
+    // ALWAYS persist what Whop created, even when the plan id is missing. The product, plan and
+    // checkout configuration already exist on the practitioner's connected account by this point;
+    // discarding the ids would orphan them beyond the reach of unpublishOffering (which only
+    // nulls local columns), and every retry would mint another orphan set.
     await prisma.whopProduct.update({
       where: { id: offering.id },
       data: {
@@ -1194,6 +1190,19 @@ export async function publishOffering(slug: string, formData: FormData): Promise
         purchaseUrl: result.purchaseUrl,
       },
     });
+
+    // A null plan id is a PUBLISH FAILURE. `createOfferingCheckout` returns `cfg.plan?.id ?? null`
+    // and Whop does not contractually guarantee it — and since §17.3c's embedded checkout is
+    // addressed BY plan id, treating null as success would move the problem to buyer time: a
+    // listed offering with a live Buy CTA and no renderable checkout.
+    //
+    // Signalled with a specific error CODE, matching every other failure in this action. A
+    // `USER:`-prefixed throw would have been swallowed by the catch below and surfaced as the
+    // generic ?whop=error banner in a different section — extractError() is never involved here,
+    // because publishOffering is not wrapped by anything that reads the convention.
+    if (!result.planId) {
+      redirect(`/practitioners/${slug}/edit?error=offering-no-plan#offerings`);
+    }
     ok = true;
   } catch (err) {
     console.error('Whop publish offering failed:', err);

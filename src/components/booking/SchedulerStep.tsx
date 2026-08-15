@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { CalendarClock, Check, ExternalLink, Loader2 } from 'lucide-react';
 
 type Props = {
@@ -15,6 +16,8 @@ type Props = {
    * screen offering them a calendar link.
    */
   checkoutUrl: string | null;
+  /** True when the server will render an EMBEDDED checkout once this step is passed. */
+  checkoutComing?: boolean;
 };
 
 /**
@@ -29,9 +32,11 @@ export function SchedulerStep({
   practitionerName,
   onAdvance,
   checkoutUrl,
+  checkoutComing = false,
 }: Props) {
   const [advanced, setAdvanced] = useState(false);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   function advance(signal: 'SELF_REPORT' | 'ASSUMED') {
     // Reveal IMMEDIATELY and record in the background. D8 is explicit that our bookkeeping must
@@ -49,6 +54,11 @@ export function SchedulerStep({
             signal,
             error: err instanceof Error ? err.message : String(err),
           });
+        })
+        // Pull the server's next step in. Without this the buyer sits on a client-rendered done
+        // state while the embedded checkout the server would now render never appears.
+        .finally(() => {
+          if (checkoutComing) router.refresh();
         });
     });
   }
@@ -62,7 +72,12 @@ export function SchedulerStep({
           {pending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-hidden />}
         </p>
 
-        {checkoutUrl ? (
+        {checkoutComing ? (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            Bringing up payment…
+          </p>
+        ) : checkoutUrl ? (
           <>
             <p className="text-xs text-muted-foreground">Last step — payment.</p>
             <a

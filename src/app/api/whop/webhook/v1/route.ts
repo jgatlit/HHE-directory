@@ -137,6 +137,28 @@ function idCapture(
   return out;
 }
 
+/**
+ * Pull `booking_intent_id` out of a payment payload.
+ *
+ * Whop nests checkout metadata differently depending on the payload shape, and getting this wrong
+ * fails SILENTLY — the payment is recorded on Whop's side and the intent stays unpaid forever. So
+ * every plausible location is checked rather than betting on one.
+ */
+function bookingIntentIdFrom(data: Record<string, unknown>): string | null {
+  const candidates = [
+    asRecord(data.metadata),
+    asRecord(asRecord(data.checkout_session)?.metadata),
+    asRecord(asRecord(data.membership)?.metadata),
+    asRecord(asRecord(data.plan)?.metadata),
+  ];
+  for (const m of candidates) {
+    const id = asString(m?.booking_intent_id);
+    if (id) return id;
+  }
+  return null;
+}
+
+
 async function handleEvent(
   type: string,
   data: Record<string, unknown>,
@@ -199,12 +221,40 @@ async function handleEvent(
       await updatePayoutState(practitioner.id, update);
       return null;
     }
-    case 'payment.succeeded':
-      // Recorded in the audit row above; there is no financial state to mutate yet and
-      // WhopWebhookEvent has no practitioner relation, so resolving here would only burn a query
-      // on the highest-volume event. Attribution is available from the payload's metadata when
-      // Layer Y reporting needs it.
+    case 'payment.succeeded': {
+      // THE AUTHORITY FOR PAYMENT (§17.3c). Everything else in the checkout path — the embed's
+      // onComplete, the optimistic UI — is display. This is the only party that can prove money
+      // moved, and it is the only writer of PAID.
+      //
+      // Until this existed the sole writer was a PUBLIC UNAUTHENTICATED server action taking the
+      // two values printed in the booking URL, so anyone holding a link could record a sale that
+      // never happened; and a buyer whose tab closed mid-redirect was never recorded at all.
+      //
+      // metadata MERGES onto the checkout session, so booking_intent_id arrives alongside the
+      // configuration's practitioner_id/offering_id. Whop nests it differently across payload
+      // shapes, so every plausible location is checked rather than assuming one.
+      const intentId = bookingIntentIdFrom(data);
+      if (!intentId) {
+        // Layer X subscription payments legitimately carry no booking intent — not an error.
+        return null;
+      }
+      const paid = await prisma.bookingIntent.updateMany({
+        // Never re-writes an already-paid intent: `paidAt: null` is the idempotency guard, so a
+        // Whop retry (3x over ~70s) cannot double-record.
+        where: { id: intentId, paidAt: null },
+        data: { status: 'PAID', paidAt: new Date() },
+      });
+      if (paid.count === 0) {
+        // Either already recorded (fine, retries are expected) or an id we do not know — which is
+        // worth saying out loud, because it means money moved against an intent we cannot see.
+        const exists = await prisma.bookingIntent.findUnique({
+          where: { id: intentId },
+          select: { id: true },
+        });
+        if (!exists) return `payment.succeeded referenced unknown booking intent ${intentId}`;
+      }
       return null;
+    }
     default:
       return null;
   }
