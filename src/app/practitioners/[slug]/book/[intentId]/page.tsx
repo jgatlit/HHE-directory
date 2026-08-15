@@ -1,9 +1,12 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { Check, CalendarClock } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
 import { listedWhere } from '@/lib/practitioner-indexer';
 import { Card } from '@/components/ui/card';
+import { flowShape, paymentsLive } from '@/lib/booking-flow';
+import { SchedulerStep } from '@/components/booking/SchedulerStep';
+import { recordScheduleSignal } from './actions';
 
 type Props = { params: { slug: string; intentId: string } };
 
@@ -15,44 +18,67 @@ export const metadata = { robots: { index: false, follow: false } };
  *
  * THE ID IN THE URL IS THE POINT. It is what makes returning here IDEMPOTENT, which is what lets
  * the T3 new-tab fallback and §10's resume link work at all — a buyer who leaves for their
- * scheduler, or comes back from an abandonment email an hour later, lands on the same intent
- * rather than starting over or creating a second lead.
- *
- * Step 2 (SCHEDULE) is §17.3b, and per §17 item 3 it is built on the NULL ADAPTER first and
- * treated as the real path — progressive enhancement, not graceful degradation. The reference
- * practitioner is on Acuity, which has no completion event, so the fallback IS her experience.
+ * scheduler, or returns from an abandonment email an hour later, lands on the same intent rather
+ * than starting over or creating a second lead.
  */
 export default async function BookingFlowPage({ params }: Props) {
-  // Scoped by slug as well as id: the id alone is a bearer token, and a bare `findUnique` would
-  // render one practitioner's lead under another's profile URL. IDOR discipline — a mismatch and
-  // a missing row produce one identical 404.
+  // Scoped by slug AND through the listing gate, matching the capture page and action: the id
+  // alone is a bearer token, and without the gate a bookmarked URL would keep serving a delisted
+  // or trial-expired practitioner's calendar indefinitely. IDOR discipline — a mismatch, a
+  // missing row and an unlisted practitioner all produce one identical 404.
   const intent = await prisma.bookingIntent.findFirst({
-    // The LISTING GATE belongs here too. Both the capture page and the capture action apply it,
-    // and omitting it left a bookmarked flow URL serving a delisted or trial-expired
-    // practitioner's calendar indefinitely — widening the paywall hole over time, since §10's
-    // resume email is specced to point at exactly this URL.
-    where: {
-      id: params.intentId,
-      practitioner: { slug: params.slug, ...listedWhere() },
-    },
+    where: { id: params.intentId, practitioner: { slug: params.slug, ...listedWhere() } },
     select: {
       id: true,
       name: true,
       status: true,
-      practitioner: { select: { slug: true, displayName: true } },
-      offering: { select: { title: true } },
+      practitioner: { select: { slug: true, displayName: true, whopPayoutsEnabled: true } },
+      offering: {
+        select: {
+          title: true,
+          archived: true,
+          acceptsPayments: true,
+          whopPlanId: true,
+          purchaseUrl: true,
+        },
+      },
       bookingLink: { select: { url: true, label: true } },
     },
   });
   if (!intent) notFound();
 
-  // `status` was queried and ignored, so a PAID or ABANDONED intent rendered the identical
-  // "we have your details, pick a time" screen — inviting a second booking of a session the
-  // buyer already holds, or reviving an intent the §10 sweep had already written off.
+  // An offering archived after capture must stop driving this flow — otherwise the buyer can pay
+  // for something the practitioner has retired (archiving and unpublishing are separate actions,
+  // so the Whop fields may still be populated). Both other entry points already scope on this.
+  const offering = intent.offering && !intent.offering.archived ? intent.offering : null;
+
+  const live = offering
+    ? paymentsLive({
+        acceptsPayments: offering.acceptsPayments,
+        practitionerPayoutsEnabled: intent.practitioner.whopPayoutsEnabled,
+        whopPlanId: offering.whopPlanId,
+      })
+    : false;
+
+  const shape = flowShape({
+    hasSchedulerUrl: !!intent.bookingLink?.url,
+    paymentsLive: live,
+  });
+
+  // A settled intent must not render an actionable screen: showing "pick a time" to someone who
+  // already paid invites a second booking of a session they hold, and §10's resume link points
+  // at this exact URL.
   const settled = intent.status === 'PAID';
+  // Already past step 2. Rendering the scheduler again would hide the payment CTA behind a
+  // second trip through a calendar they have already used — and §10's resume email points here.
+  const alreadyScheduled = intent.status === 'SCHEDULED';
+  const checkoutUrl = live ? (offering?.purchaseUrl ?? null) : null;
+
+  const advance = recordScheduleSignal.bind(null, params.slug, intent.id);
+  const firstName = intent.name.split(' ')[0];
 
   return (
-    <main className="mx-auto max-w-lg px-4 py-10 sm:py-14">
+    <main className="mx-auto max-w-2xl px-4 py-10 sm:py-14">
       <Card className="space-y-4 p-6 sm:p-8">
         <div className="flex items-start gap-3">
           <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
@@ -60,37 +86,49 @@ export default async function BookingFlowPage({ params }: Props) {
           </span>
           <div className="space-y-0.5">
             <h1 className="text-sm font-semibold">
-              Thanks{intent.name ? `, ${intent.name.split(' ')[0]}` : ''} — {intent.practitioner.displayName} has your details.
+              Thanks{firstName ? `, ${firstName}` : ''} — {intent.practitioner.displayName} has
+              your details.
             </h1>
             <p className="text-xs text-muted-foreground">
-              {intent.offering?.title ?? intent.bookingLink?.label ?? 'Booking'}
+              {offering?.title ?? intent.bookingLink?.label ?? 'Booking'}
             </p>
           </div>
         </div>
 
-        {/* Step 2 lands in §17.3b. Until it does, the buyer is handed the practitioner's own
-            scheduler directly rather than a dead end — the lead is already captured, so this
-            degrades to exactly the behaviour the profile had before the flow existed. */}
         {settled ? (
           <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
             This booking is already complete — nothing further to do. If you need to change it,
             contact {intent.practitioner.displayName} directly.
           </p>
-        ) : intent.bookingLink?.url ? (
+        ) : shape.showSchedule && intent.bookingLink?.url && !alreadyScheduled ? (
+          <SchedulerStep
+            schedulerUrl={intent.bookingLink.url}
+            practitionerName={intent.practitioner.displayName}
+            onAdvance={advance}
+            // §17.3c replaces this with Whop's embedded checkout addressed by plan id (D11).
+            // Until then the existing hosted checkout is used rather than a dead end.
+            checkoutUrl={checkoutUrl}
+          />
+        ) : checkoutUrl ? (
+          // Reached two ways, and BOTH were previously dead ends: §5's "subscription / no
+          // scheduling" row (1 → 3, no calendar at all), and a returning buyer whose intent is
+          // already SCHEDULED. `showCheckout` was computed and tested but only ever passed into
+          // the scheduler, so neither could ever reach payment.
           <div className="space-y-2 rounded-md border bg-muted/20 p-3">
-            <p className="flex items-center gap-1.5 text-xs font-medium">
-              <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-              Next: pick a time
+            <p className="text-xs text-muted-foreground">
+              {alreadyScheduled ? 'Last step — payment.' : 'No scheduling needed — just payment.'}
             </p>
             <a
-              href={intent.bookingLink.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              href={checkoutUrl}
+              className="inline-flex h-11 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
             >
-              Open {intent.practitioner.displayName}&apos;s calendar
+              Continue to payment
             </a>
           </div>
+        ) : alreadyScheduled ? (
+          <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+            You&apos;re all set — {intent.practitioner.displayName} has your details and your time.
+          </p>
         ) : (
           <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
             {intent.practitioner.displayName} will be in touch to arrange a time.
