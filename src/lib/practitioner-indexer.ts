@@ -157,7 +157,7 @@ export function listedWhere(): Prisma.PractitionerWhereInput {
  * distinguish "retired" from "merely unlisted" has to key on this, and it must do so THROUGH
  * `bookableWhere()` rather than re-deriving the comparison.
  */
-const RETIREMENT_SENTINEL = new Date('1971-01-01T00:00:00.000Z');
+export const RETIREMENT_SENTINEL = new Date('1971-01-01T00:00:00.000Z');
 
 /**
  * Who may be BOOKED — as distinct from who may be DISCOVERED.

@@ -1267,3 +1267,52 @@ export async function unpublishOffering(slug: string, formData: FormData): Promi
   revalidatePath(`/practitioners/${slug}/edit`);
   redirect(`/practitioners/${slug}/edit?saved=offering#offerings`);
 }
+
+/**
+ * PRACTITIONER (or an admin acting for them): change the account email.
+ *
+ * ⚠️ This changes the SIGN-IN identity. Magic-link is the only authentication this app has, so
+ * after this write the old address can no longer sign in and the new one can. There is
+ * deliberately NO confirmation round-trip to the new address yet — see the note below.
+ *
+ * The lockout risk is real but bounded: a typo means the practitioner cannot sign in, and an
+ * ADMIN can put it right from /admin/invites (`updateInvitationEmail`), which is why shipping
+ * this without a verification flow is acceptable rather than reckless. A verify-before-switch
+ * flow is the correct end state and is scoped in the commit that introduced this.
+ *
+ * The session survives the change: the JWT carries `sub` (the user id), not the address, so the
+ * practitioner is not signed out mid-edit. Their token's `email` claim does go stale until they
+ * sign in again — harmless everywhere except the onboarding gate, which compares
+ * `session.user.email` to `invitation.email`. Onboarding is a one-time flow that has already
+ * completed for anyone who can reach this action.
+ */
+export async function updateAccountEmail(slug: string, formData: FormData): Promise<void> {
+  const target = await authorizeForSlug(slug);
+
+  const raw = String(formData.get('email') ?? '').trim().toLowerCase();
+  if (!raw || raw.length > 320 || !/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(raw)) {
+    redirect(`/practitioners/${slug}/edit?error=bad-email#account`);
+  }
+
+  const practitioner = await prisma.practitioner.findUnique({
+    where: { id: target.id },
+    select: { userId: true, user: { select: { email: true } } },
+  });
+  if (!practitioner) redirect('/auth/error?error=AccessDenied');
+
+  if (practitioner.user.email.toLowerCase() === raw) {
+    redirect(`/practitioners/${slug}/edit?saved=email#account`);
+  }
+
+  // Refuse on collision rather than merging accounts. Merging would hand this profile to
+  // whoever controls the other address.
+  const collision = await prisma.user.findUnique({ where: { email: raw }, select: { id: true } });
+  if (collision) {
+    redirect(`/practitioners/${slug}/edit?error=email-taken#account`);
+  }
+
+  await prisma.user.update({ where: { id: practitioner.userId }, data: { email: raw } });
+
+  revalidatePath(`/practitioners/${slug}/edit`);
+  redirect(`/practitioners/${slug}/edit?saved=email#account`);
+}

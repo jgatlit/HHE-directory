@@ -14,9 +14,11 @@ import {
   deleteInvitation,
   setDelisted,
   setArchived,
+  updateInvitationEmail,
 } from './actions';
 import { DeleteInviteButton } from './DeleteInviteButton';
 import { ConfirmActionButton } from './ConfirmActionButton';
+import { EditEmailControl } from './EditEmailControl';
 
 export const dynamic = 'force-dynamic';
 
@@ -144,6 +146,26 @@ export default async function AdminInvitesPage({
               Saved. Search was <span className="font-medium">not</span> checked — Typesense is not
               configured in this environment, so nothing was pushed and nothing was verified. On
               production this notice should never appear.
+            </p>
+          </div>
+        )}
+        {(errorCode === 'email-taken' || errorCode === 'bad-email') && (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+            <p>
+              {errorCode === 'email-taken' ? (
+                <>
+                  <span className="font-medium">That address already belongs to another
+                  account.</span>{' '}
+                  Nothing was changed. Merging the two would hand this profile to whoever holds
+                  the other address, so it is refused rather than guessed at.
+                </>
+              ) : (
+                <>
+                  <span className="font-medium">That is not a usable email address.</span> Nothing
+                  was changed.
+                </>
+              )}
             </p>
           </div>
         )}
@@ -311,6 +333,14 @@ export default async function AdminInvitesPage({
                         </button>
                       </form>
                     )}
+                    {/*
+                      Correcting the address in place is what prevents a duplicate profile:
+                      re-inviting a corrected email creates a NEW User, which has no
+                      practitioner, so onboarding takes its create branch and the same person
+                      ends up with a second row. That is how the duplicate sarah-schindler row
+                      happened.
+                    */}
+                    <EditEmailControl id={inv.id} email={inv.email} action={updateInvitationEmail} />
                     {/*
                       Directory controls. Rendered whenever a PROFILE exists — not only on
                       accepted rows — because the twelve seeded pilots have profiles and no
