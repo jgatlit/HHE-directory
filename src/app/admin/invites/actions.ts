@@ -5,7 +5,11 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { auth, signIn } from '@/auth';
 import { prisma } from '@/lib/prisma';
-import { indexPractitioner, indexPractitionerVerified } from '@/lib/practitioner-indexer';
+import {
+  indexPractitioner,
+  indexPractitionerVerified,
+  RETIREMENT_SENTINEL,
+} from '@/lib/practitioner-indexer';
 
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const TRIAL_DAYS = 90;
@@ -193,7 +197,64 @@ export async function resendInvitation(formData: FormData): Promise<void> {
     redirect('/admin/invites?error=send-failed');
   }
 
+  // Operator rule (2026-08-18): resending an invitation RESETS the recipient's pilot clock.
+  // A trial that burned down while the person could not get in was never a trial. The twelve
+  // pilots whose invitations expired 2026-06-28 are the case this exists for.
+  //
+  // Runs only AFTER a confirmed send, so a failed delivery cannot hand out 90 free days for an
+  // email nobody received.
+  await resetTrialForEmail(invitation.email);
+
   revalidatePath('/admin/invites');
+  revalidatePath('/');
+}
+
+/**
+ * Reset one practitioner's pilot clock, resolved by email. Two guards, both load-bearing:
+ *
+ * 1. **Never resurrect a RETIRED row.** `trialEndsAt` backdated to the epoch is this repo's
+ *    retirement sentinel — `bookableWhere()` keys on it, and it is the only thing stopping a
+ *    dead-mailbox duplicate (`sarah-schindler`, owner confirmed unreachable) from silently
+ *    swallowing leads. Writing now+90d over it would un-retire that row and put a lead-eating
+ *    profile back into circulation. Retirement is not a lapsed trial and must not be treated
+ *    as one.
+ *
+ * 2. **Do not CREATE a clock that does not exist.** A null `trialEndsAt` means pre-trial —
+ *    listed, free, no countdown — and every live practitioner is in that state because
+ *    `PILOT_TRIAL_CLOCK_ENABLED` is unset. Starting a 90-day countdown for twelve pilots as a
+ *    side effect of a button labelled "resend invite" would begin the paywall for the whole
+ *    cohort without anyone deciding to. `scripts/backfill-trial-dates.ts` is the deliberate
+ *    lever for that and should stay the only one. When the clock IS enabled, the same button
+ *    resets and starts a real 90 days, exactly as specified.
+ */
+async function resetTrialForEmail(email: string): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { practitioner: { select: { id: true, trialEndsAt: true } } },
+  });
+  const practitioner = user?.practitioner;
+  if (!practitioner) return;
+
+  const isRetired =
+    practitioner.trialEndsAt !== null && practitioner.trialEndsAt <= RETIREMENT_SENTINEL;
+  if (isRetired) return;
+
+  const clockEnabled = process.env.PILOT_TRIAL_CLOCK_ENABLED === 'true';
+  if (practitioner.trialEndsAt === null && !clockEnabled) return;
+
+  await prisma.practitioner.update({
+    where: { id: practitioner.id },
+    data: { trialEndsAt: new Date(Date.now() + TRIAL_MS) },
+  });
+
+  // Push-based index: a clock change that alters listing state must be sent, or /search and the
+  // home page disagree. Same reasoning as resetTrial().
+  await indexPractitioner(practitioner.id).catch((err) =>
+    console.error('Typesense reindex failed after resend trial reset:', {
+      practitionerId: practitioner.id,
+      err,
+    }),
+  );
 }
 
 /**
@@ -312,4 +373,72 @@ export async function setDelisted(formData: FormData): Promise<void> {
 /** Soft DELETE. Drops out of discovery AND booking; booking intents and payments are preserved. */
 export async function setArchived(formData: FormData): Promise<void> {
   await applyDirectoryFlag(formData, 'archivedAt');
+}
+
+/**
+ * Normalize + validate an email the way the auth stack compares them.
+ *
+ * `adminEmails()` in src/auth.ts lowercases before matching, the onboarding gate compares
+ * `session.user.email?.toLowerCase()` against `invitation.email.toLowerCase()`, and
+ * `User.email` is `@unique`. Storing a mixed-case address therefore works everywhere EXCEPT
+ * the uniqueness index, which is case-sensitive — so `Jane@x.com` and `jane@x.com` would be two
+ * users, two practitioners, and one very confused person. Lowercase on write.
+ */
+function normalizeEmail(raw: string): string | null {
+  const email = raw.trim().toLowerCase();
+  if (!email || email.length > 320) return null;
+  // Deliberately permissive: the authoritative test of an address is whether the magic link
+  // arrives, not a regex. This rejects only what cannot possibly be an address.
+  if (!/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
+/**
+ * ADMIN: correct the registered email on an invitation and its practitioner, together.
+ *
+ * This is the fix for the duplicate-practitioner trap. Until now the only way to correct a
+ * mistyped address was to invite the right one — but the accept path resolves the practitioner
+ * through `User`, and a different email is a different `User` with no practitioner, so
+ * onboarding takes its create branch and the same human ends up with a SECOND profile. That is
+ * exactly how the duplicate `sarah-schindler` row was created. Editing in place cannot produce
+ * a duplicate because no new User is involved.
+ *
+ * Both rows move together, in one transaction. The onboarding gate compares the signed-in
+ * email against `invitation.email`, so updating only the User would leave an invitation its own
+ * recipient can no longer accept — a lockout created by the tool meant to fix one.
+ */
+export async function updateInvitationEmail(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const id = String(formData.get('id') ?? '');
+  const next = normalizeEmail(String(formData.get('email') ?? ''));
+  if (!id) return;
+  if (!next) redirect('/admin/invites?error=bad-email');
+
+  const invitation = await prisma.invitation.findUnique({
+    where: { id },
+    select: { email: true },
+  });
+  if (!invitation) redirect('/admin/invites?error=not-found');
+  if (invitation.email.toLowerCase() === next) {
+    revalidatePath('/admin/invites');
+    return;
+  }
+
+  // Refuse rather than merge. Two people, or one person with two rows, are indistinguishable
+  // from here — and silently attaching this invitation to an existing account would hand one
+  // person's profile to whoever holds the other address.
+  const collision = await prisma.user.findUnique({ where: { email: next }, select: { id: true } });
+  if (collision) redirect('/admin/invites?error=email-taken');
+
+  const owner = await prisma.user.findUnique({
+    where: { email: invitation.email },
+    select: { id: true },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.invitation.update({ where: { id }, data: { email: next } });
+    if (owner) await tx.user.update({ where: { id: owner.id }, data: { email: next } });
+  });
+
+  revalidatePath('/admin/invites');
 }
