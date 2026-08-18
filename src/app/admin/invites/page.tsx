@@ -103,9 +103,18 @@ export default async function AdminInvitesPage({
 
   // Archived profiles drop out of the default view — that is what makes archive a soft DELETE
   // rather than another flag. They stay one click away rather than becoming unreachable.
-  const archivedCount = allInvitations.filter(
-    (inv) => resolve(inv.email)?.practitioner?.archivedAt,
-  ).length;
+  //
+  // Counted by DISTINCT PRACTITIONER, not by row. One practitioner legitimately holds several
+  // invitations (jgatlit@gmail.com has two), and archiving is per-practitioner — so counting rows
+  // reported "(2)" after archiving ONE person, which reads as two people archived. Observed live
+  // 2026-08-18.
+  const archivedPractitionerIds = new Set(
+    allInvitations
+      .map((inv) => resolve(inv.email)?.practitioner)
+      .filter((p) => p?.archivedAt)
+      .map((p) => p!.id),
+  );
+  const archivedCount = archivedPractitionerIds.size;
   const invitations = showArchived
     ? allInvitations
     : allInvitations.filter((inv) => !resolve(inv.email)?.practitioner?.archivedAt);
@@ -209,7 +218,9 @@ export default async function AdminInvitesPage({
                 href={showArchived ? '/admin/invites' : '/admin/invites?archived=1'}
                 className="text-xs text-muted-foreground underline-offset-2 hover:underline"
               >
-                {showArchived ? 'Hide archived' : `Show archived (${archivedCount})`}
+                {showArchived
+                  ? 'Hide archived'
+                  : `Show ${archivedCount} archived practitioner${archivedCount === 1 ? '' : 's'}`}
               </Link>
             )}
           </div>
