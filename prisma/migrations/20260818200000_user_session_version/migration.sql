@@ -1,0 +1,15 @@
+-- Session revocation counter. Every issued JWT carries the value it was minted with; a token
+-- whose value no longer matches its user's is rejected, which signs that user out everywhere.
+--
+-- Needed because sessions no longer expire and the JWT strategy writes no `Session` rows, so
+-- there was nothing to delete when a token had to be killed.
+--
+-- Additive and defaulted, so existing rows are valid immediately and code that has never heard
+-- of this column is unaffected — safe under the expand/contract rule the build requires.
+--
+-- NOTE: `prisma migrate diff` also proposes `DROP INDEX "Practitioner_searchText_trgm_idx"`.
+-- DELIBERATELY OMITTED. That pg_trgm GIN index is created by raw SQL and cannot be expressed in
+-- schema.prisma, so every diff proposes dropping it; accepting would silently remove typo
+-- tolerance from search. Never accept it.
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "sessionVersion" INTEGER NOT NULL DEFAULT 0;

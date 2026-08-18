@@ -18,14 +18,27 @@ datasource db {
 // ----- NextAuth v5 tables (Prisma adapter contract) -----
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
-  emailVerified DateTime?
-  image         String?
-  role          Role      @default(CLIENT)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  name           String?
+  email          String    @unique
+  emailVerified  DateTime?
+  image          String?
+  role           Role      @default(CLIENT)
+  /// Session revocation counter. Every issued JWT carries the value it was minted with; the
+  /// `jwt` callback invalidates any token whose value no longer matches. Bumping this signs the
+  /// user out EVERYWHERE, immediately.
+  ///
+  /// This exists because sessions no longer expire (auth.config.ts, ~13 months) and the JWT
+  /// strategy writes no `Session` rows — so without it there is nothing to delete and a stolen
+  /// token would be valid forever. Deleting the user achieves the same end by a different route:
+  /// no row, no valid session.
+  ///
+  /// Note this is NOT how a demotion takes effect. Role is re-read per request, and a demoted
+  /// admin should stay signed in as a practitioner rather than be thrown out. Bump this only to
+  /// KILL sessions — a suspected token compromise, a lost device, an offboarding.
+  sessionVersion Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   accounts            Account[]
   sessions            Session[]
