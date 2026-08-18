@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   sendEmail: vi.fn(),
-  indexPractitioner: vi.fn(),
+  indexPractitionerVerified: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -32,7 +32,7 @@ vi.mock('@/lib/email', () => ({
   EmailNotConfigured: class EmailNotConfigured extends Error {},
 }));
 vi.mock('@/lib/practitioner-indexer', () => ({
-  indexPractitioner: mocks.indexPractitioner,
+  indexPractitionerVerified: mocks.indexPractitionerVerified,
 }));
 
 const prac = (id: string, email: string | null = `${id}@example.com`) => ({
@@ -59,8 +59,11 @@ describe('trial-sweep cron', () => {
     delete process.env.CRON_SECRET; // open endpoint — auth is covered by its own guard
     mocks.findMany.mockReset();
     mocks.sendEmail.mockReset();
-    mocks.indexPractitioner.mockReset();
-    mocks.indexPractitioner.mockResolvedValue(undefined);
+    mocks.indexPractitionerVerified.mockReset();
+    // A CONFIRMED delist is the default. Note the shape matters: this mock previously resolved
+    // `undefined`, which under the new contract reads as a failure — the suite failed loudly
+    // rather than passing vacuously, which is the behaviour we want from a mock that drifts.
+    mocks.indexPractitionerVerified.mockResolvedValue({ ok: true, listed: false, verified: true });
   });
 
   it('fails LOUD when RESEND_API_KEY is missing — never reports an empty run as success', async () => {
@@ -117,8 +120,8 @@ describe('trial-sweep cron', () => {
 
     const { body } = await run();
 
-    expect(mocks.indexPractitioner).toHaveBeenCalledTimes(2);
-    expect(mocks.indexPractitioner).toHaveBeenCalledWith('lapsed1');
+    expect(mocks.indexPractitionerVerified).toHaveBeenCalledTimes(2);
+    expect(mocks.indexPractitionerVerified).toHaveBeenCalledWith('lapsed1');
     expect(body.delisted).toMatchObject({ matched: 2, reconciled: 2, failed: 0 });
   });
 
@@ -156,5 +159,65 @@ describe('trial-sweep cron', () => {
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.failures).toHaveLength(0);
+  });
+});
+
+describe('trial-sweep enforcement counts a FAILED delist — the counter that never fired', () => {
+  /**
+   * For two months this counter was structurally unreachable. The loop called
+   * `indexPractitioner()`, whose only path here is the delete branch, and `deleteFromIndex()`
+   * swallows every error in a bare catch — so it could not throw, the catch never ran, `failed`
+   * stayed 0, and the sweep reported a clean run whether or not Typesense had removed anyone.
+   * A practitioner left in /search past their trial is a free listing, and the log said nothing.
+   *
+   * These assert the counter is now driven by a RETURNED verdict rather than by an exception
+   * that cannot happen.
+   */
+  beforeEach(() => {
+    mocks.findMany.mockImplementation(async (args: never) =>
+      isBucketQuery(args) ? [] : [prac('lapsed1'), prac('lapsed2')],
+    );
+    mocks.sendEmail.mockResolvedValue({ id: 'msg' });
+  });
+
+  it('a reported failure increments `failed` and is attributed, not swallowed', async () => {
+    mocks.indexPractitionerVerified.mockResolvedValue({
+      ok: false,
+      reason: 'mismatch: expected indexed=false, found true',
+    });
+
+    const { body } = await run();
+
+    expect(body.delisted).toMatchObject({ matched: 2, reconciled: 0, failed: 2 });
+    expect(body.ok, 'a run that failed to delist anyone must not report ok').toBe(false);
+  });
+
+  it('a MISMATCH counts as failure — the document survived the delete', async () => {
+    // The exact silent-paywall case: Typesense accepted the delete and the doc is still there.
+    mocks.indexPractitionerVerified
+      .mockResolvedValueOnce({ ok: false, reason: 'mismatch: expected indexed=false, found true' })
+      .mockResolvedValueOnce({ ok: true, listed: false, verified: true });
+
+    const { body } = await run();
+
+    expect(body.delisted).toMatchObject({ matched: 2, reconciled: 1, failed: 1 });
+  });
+
+  it('an unverified sync is counted apart from a confirmed one', async () => {
+    // Typesense absent from the environment: nothing was pushed and nothing was checked.
+    // "reconciled" must never quietly mean "we did not look".
+    mocks.indexPractitionerVerified.mockResolvedValue({ ok: true, listed: false, verified: false });
+
+    const { body } = await run();
+
+    expect(body.delisted).toMatchObject({ matched: 2, reconciled: 2, failed: 0, unverified: 2 });
+  });
+
+  it('a THROWN error is still caught and counted, not allowed to abort the sweep', async () => {
+    mocks.indexPractitionerVerified.mockRejectedValue(new Error('prisma exploded'));
+
+    const { body } = await run();
+
+    expect(body.delisted).toMatchObject({ matched: 2, reconciled: 0, failed: 2 });
   });
 });

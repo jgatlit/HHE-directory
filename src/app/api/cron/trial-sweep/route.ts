@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { indexPractitioner } from '@/lib/practitioner-indexer';
+import { indexPractitionerVerified } from '@/lib/practitioner-indexer';
 import { sendEmail } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
 
@@ -216,22 +216,38 @@ export async function GET(request: Request): Promise<NextResponse> {
     select: { id: true },
   });
 
-  const delisted = { matched: expired.length, reconciled: 0, failed: 0 };
+  const delisted = { matched: expired.length, reconciled: 0, failed: 0, unverified: 0 };
   for (const p of expired) {
+    // `indexPractitionerVerified`, NOT `indexPractitioner`. The "fail soft, but LOUD" intent
+    // below was UNREACHABLE for two months: this call site only ever takes the delete branch,
+    // and `deleteFromIndex()` swallows every error in a bare catch, so it cannot throw. The
+    // catch never ran, `failed` never incremented, and the sweep reported a clean run whether
+    // or not Typesense had actually removed anyone — the precise shape of a silent paywall
+    // hole. The verified variant writes, reads the document back, and returns the
+    // disagreement instead of raising it, so the counter below is real.
+    let result;
     try {
-      await indexPractitioner(p.id);
-      delisted.reconciled += 1;
+      result = await indexPractitionerVerified(p.id);
     } catch (err) {
-      // Fail soft, but LOUD: a practitioner stuck in search past their trial is a billing
-      // hole, and a silent catch here would hide it indefinitely.
-      const message = err instanceof Error ? err.message : String(err);
-      delisted.failed += 1;
-      failures.push({ bucket: 'delist', practitionerId: p.id, error: message });
-      console.error(
-        '[trial-sweep] DELIST FAILED',
-        JSON.stringify({ practitionerId: p.id, error: message }),
-      );
+      result = { ok: false as const, reason: err instanceof Error ? err.message : String(err) };
     }
+
+    if (result.ok) {
+      delisted.reconciled += 1;
+      // Typesense absent from this environment: the write was a no-op and nothing was checked.
+      // Counted separately so "reconciled" never silently means "we did not look".
+      if (!result.verified) delisted.unverified += 1;
+      continue;
+    }
+
+    // A practitioner stuck in search past their trial is a billing hole. It must be counted and
+    // attributed, never swallowed.
+    delisted.failed += 1;
+    failures.push({ bucket: 'delist', practitionerId: p.id, error: result.reason });
+    console.error(
+      '[trial-sweep] DELIST FAILED',
+      JSON.stringify({ practitionerId: p.id, error: result.reason }),
+    );
   }
 
   const ok = failures.length === 0;
