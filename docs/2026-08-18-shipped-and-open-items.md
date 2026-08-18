@@ -48,7 +48,7 @@ framed there and deliberately unanswered: does the subscription buy directory *p
 
 ## Open items
 
-### 1. Server-rendered output IS verified live; client-side interaction is not
+### 1. ✅ CLOSED — server-rendered output AND client-side interaction both verified live
 Verified on production as an authenticated ADMIN (see "How the authenticated check was done"):
 
 - **Header (#72)** — signed in, the slot renders `My profile · Sign out`; `Sign in` appears only
@@ -63,10 +63,29 @@ Verified on production as an authenticated ADMIN (see "How the authenticated che
   "this practitioner signs in with" copy. The operator's own address never leaked into another
   profile's form — the viewer/owner conflation this was designed against is absent.
 
-**Still unexercised: everything client-side.** The two-click arm/disarm on Archive/Delete, the
-click-to-reveal email control, Escape/outside-click dismissal, and actually submitting any of
-these forms. Those are React interactions that server HTML cannot prove. Nobody has clicked a
-button. No delist, archive, email change or resend has actually been executed against real data.
+**✅ RESOLVED later the same day — the UI was driven in a real browser.** Playwright against
+production with a minted admin session (recipe below). Verified by clicking: sign-out ends the
+session (`/api/auth/session` → `null`, `/admin/invites` → 307); delist→relist and
+archive→restore both round-trip on the operator profile, with the DB returning to 0 flagged; and
+the two-click confirm dismisses on **both** Escape and outside-click without writing.
+
+Two things surfaced that no HTTP-level check could reach:
+
+1. **A real defect — "Show archived (N)" counted invitation ROWS, not practitioners.** Archiving
+   one person rendered "(2)", because `jgatlit@gmail.com` holds two invitation rows. Fixed in
+   PR #80 (`d235a08`) and verified live: it now reads **"Show 1 archived practitioner"**.
+2. **A false alarm I reported as a defect — select-on-open.** I claimed the email control failed
+   to select its text and that `focus()` fixed it. ⚠️ **Both halves were wrong.** `select()`
+   already focuses in Chromium; typing replaced the value with and without the change. My
+   evidence was `selectionEnd - selectionStart` reading 0, and both are **`null` on
+   `<input type="email">`** because the selection API does not apply to that type — so it could
+   never have read anything else. Retracted in `13d04d7`; `focus()` is kept only as a defensive
+   ordering and is now labelled as such.
+
+**Still unexercised:** submitting an actual email CHANGE (only the cancel path was exercised),
+the resend path, and Typesense removal of a **listed** document — the operator profile is
+unlisted, so delisting it takes the already-absent branch. Proving a real removal means briefly
+hiding a real practitioner from search, which was deliberately not done.
 
 ### 2. Resend is a no-op on billing until `PILOT_TRIAL_CLOCK_ENABLED=true`
 The operator instruction was "resend invite SHOULD reset the trial period". The implementation
