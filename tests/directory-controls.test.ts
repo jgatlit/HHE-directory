@@ -214,11 +214,19 @@ describe('admin control affordances say what they do', () => {
   const read = (...seg: string[]) =>
     readFileSync(join(__dirname, '..', 'src', ...seg), 'utf8');
 
-  it('the email control FOCUSES before it selects', () => {
-    // `.select()` on an unfocused input sets a selection nothing can see and nothing types into.
-    // The component's own comment promises "one click and one retype"; without focus() that
-    // promise is false, which is the describes-a-state-it-does-not-implement defect this repo
-    // has now hit twice in the same directory.
+  it('the email control focuses before it selects (defensive ordering, not a bug fix)', () => {
+    // ⚠️ READ THIS BEFORE TRUSTING THE ORIGINAL RATIONALE. This test was introduced claiming
+    // select-on-open was BROKEN without focus(). It was not. `select()` focuses the element in
+    // Chromium, verified directly: typing replaced the value with and without the focus() call.
+    // The "evidence" of breakage was selectionStart/selectionEnd reading 0 — they are `null` on
+    // <input type="email">, where the selection API does not apply, so that number could never
+    // have been anything else.
+    //
+    // The assertion is KEPT because the ordering is still correct-by-construction: the spec
+    // defines select() as setting a selection range, not as focusing, so relying on the side
+    // effect is relying on an implementation detail. It guards a deliberate choice — it does
+    // NOT guard a defect, and nobody should cite it as evidence one existed.
+    //
     // Anchor on the CALL EXPRESSIONS, not on bare `.focus()` / `.select()` — the explanatory
     // comment above the code mentions both, so a substring search matches prose and measures
     // the wrong thing. (It did, on the first attempt at this very test.)
