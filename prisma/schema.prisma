@@ -251,7 +251,7 @@ model Practitioner {
   whopCompanyCreatedAt  DateTime?
   whopProducts          WhopProduct[]
 
-  // Layer X — platform subscription (practitioner pays $59/mo to be listed; pilots trial for 90 days)
+  // Layer X — platform subscription (practitioner pays $49/mo to be listed; pilots trial for 90 days)
   subscriptionStatus SubscriptionStatus @default(NONE)
   /// DEPRECATED — superseded by trialEndsAt + the ADMIN exemption (see
   /// docs/superpowers/specs/2026-07-16-pilot-trial-design.md). No longer read by isListed().
@@ -277,7 +277,7 @@ model Practitioner {
   /// discovery AND out of booking, and hides the row from the admin list by default. Reversible.
   archivedAt DateTime?
 
-  whopMembershipId            String? @unique // membership on our own $59/mo Whop product
+  whopMembershipId            String? @unique // membership on our own $49/mo Whop product
   /// Per-practitioner checkout for the monthly listing plan, minted once and reused. Carries
   /// metadata.practitioner_id so the webhook attributes payment directly instead of matching on
   /// email — which silently fails when someone pays from a different address than their profile.
