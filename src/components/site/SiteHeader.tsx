@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { Wordmark } from '@/components/frontier/Wordmark';
 import { useReducedMotion } from '@/lib/use-reduced-motion';
 import { SITE_URL, searchUrl } from '@/lib/search-url';
+import { signOutAction } from '@/components/site/actions';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -24,6 +25,10 @@ const NAV = [
   { label: 'How it works', href: '#how-it-works' },
   { label: 'For practitioners', href: '#get-listed' },
 ];
+
+/** Shared styling for the identity slot, so the anchor and the sign-out button read as one row. */
+const SLOT_LINK =
+  'whitespace-nowrap rounded-lg px-2 py-2 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white sm:px-3';
 
 type Props = {
   /**
@@ -33,9 +38,17 @@ type Props = {
    * here would mean mounting one around the whole tree to answer a single question.
    */
   profileHref?: string | null;
+  /**
+   * Whether anyone is signed in. LOAD-BEARING as a separate prop: `profileHref` is null for
+   * signed-out visitors AND for signed-in users with no practitioner record, so it cannot tell
+   * the two apart. Deriving sign-out from it would hide sign-out from exactly the accounts that
+   * most need it — an admin with no profile — and would look correct today only because all
+   * three current admins happen to own one.
+   */
+  signedIn?: boolean;
 };
 
-export function SiteHeader({ profileHref = null }: Props) {
+export function SiteHeader({ profileHref = null, signedIn = false }: Props) {
   const reduced = useReducedMotion();
   const [scrolled, setScrolled] = useState(false);
 
@@ -90,14 +103,36 @@ export function SiteHeader({ profileHref = null }: Props) {
           to someone already signed in reads as a broken session and sends them
           back through a magic-link round trip to reach a page they could have
           opened directly.
+
+          Sign out is keyed on `signedIn`, never on `profileHref`. Until this
+          existed there was no way to end a session anywhere in the product —
+          `signOut` was exported from auth.ts and imported by nothing — so the
+          only remedies were NextAuth's unstyled /api/auth/signout, clearing
+          cookies, or waiting out a 30-day JWT. That also made switching accounts
+          impossible, and role changes invisible until the token aged out, since
+          the role is stamped into the JWT at sign-in.
         */}
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <a
-            href={profileHref ?? `${SITE_URL}/auth/signin`}
-            className="whitespace-nowrap rounded-lg px-2 py-2 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white sm:px-3"
-          >
-            {profileHref ? 'My profile' : 'Sign in'}
-          </a>
+          {profileHref && (
+            <a href={profileHref} className={SLOT_LINK}>
+              My profile
+            </a>
+          )}
+          {signedIn ? (
+            /*
+              display:contents so the form adds no box of its own — the buttons stay
+              direct flex children of the bar and keep the same gap as the anchors.
+            */
+            <form action={signOutAction} className="contents">
+              <button type="submit" className={SLOT_LINK}>
+                Sign out
+              </button>
+            </form>
+          ) : (
+            <a href={`${SITE_URL}/auth/signin`} className={SLOT_LINK}>
+              Sign in
+            </a>
+          )}
           <a
             href="#get-listed"
             className="whitespace-nowrap rounded-lg border border-white/25 px-2.5 py-2 text-sm text-white transition-colors hover:border-white/50 sm:px-3.5"
