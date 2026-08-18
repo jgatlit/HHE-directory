@@ -3,7 +3,7 @@ import Resend from 'next-auth/providers/resend';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/prisma';
 import { authConfig } from '@/auth.config';
-import { currentRoleFor } from '@/lib/session-role';
+import { sessionStateFor } from '@/lib/session-role';
 
 // One email, not two. An invitation's magic link carries `callbackUrl=/onboarding?invitation=…`,
 // so a single click both signs the practitioner in AND lands them on onboarding. We brand the
@@ -158,7 +158,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     // cheap first-pass redirect, NOT the guard. The pages and server actions re-read through
     // here and are authoritative.
     async jwt({ token, user }) {
-      token.role = await currentRoleFor(user?.id ?? token.sub);
+      const state = await sessionStateFor(user?.id ?? token.sub, token.sv, Boolean(user));
+
+      // Returning null INVALIDATES the session — this is how a deleted or revoked account is
+      // actually signed out rather than merely downgraded. It is the only lever available: the
+      // JWT strategy writes no `Session` rows, so there is nothing to delete server-side.
+      if (!state.valid) return null;
+
+      token.role = state.role;
+      token.sv = state.version;
       return token;
     },
   },
