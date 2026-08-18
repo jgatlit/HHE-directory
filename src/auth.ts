@@ -2,8 +2,8 @@ import NextAuth from 'next-auth';
 import Resend from 'next-auth/providers/resend';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/prisma';
-import type { Role } from '@prisma/client';
 import { authConfig } from '@/auth.config';
+import { currentRoleFor } from '@/lib/session-role';
 
 // One email, not two. An invitation's magic link carries `callbackUrl=/onboarding?invitation=…`,
 // so a single click both signs the practitioner in AND lands them on onboarding. We brand the
@@ -142,14 +142,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
   callbacks: {
     ...authConfig.callbacks,
+    // Re-reads the role on EVERY invocation, not just at sign-in.
+    //
+    // The `if (user)` guard that used to wrap this meant the role was cached for the life of the
+    // token — so a demoted admin kept `/admin` until it expired, and the only way to bound that
+    // was to expire everyone's session. Since magic-link is the sole authentication here, every
+    // expiry is an email round trip for a non-technical practitioner.
+    //
+    // Decoupling the two lets `maxAge` be effectively infinite (see auth.config.ts) while a role
+    // change lands on the very next request. `user` is present only at sign-in; `token.sub`
+    // carries the id on every request after that.
+    //
+    // ⚠️ Middleware does NOT run this callback — it builds its instance from auth.config alone
+    // (no adapter, edge runtime), so it still decodes whatever role the token holds. It is a
+    // cheap first-pass redirect, NOT the guard. The pages and server actions re-read through
+    // here and are authoritative.
     async jwt({ token, user }) {
-      if (user) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id! },
-          select: { role: true },
-        });
-        token.role = (dbUser?.role ?? 'CLIENT') as Role;
-      }
+      token.role = await currentRoleFor(user?.id ?? token.sub);
       return token;
     },
   },
