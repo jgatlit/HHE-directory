@@ -26,10 +26,16 @@ export function EditEmailControl({ id, email, action }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    // focus() BEFORE select(). `.select()` on an unfocused input does not do what it looks like
-    // it does — the selection is set but nothing is focused, so the first keystroke goes nowhere
-    // near this field and the "one click, one retype" promise below is silently false. Measured
-    // in a real browser 2026-08-18: selection length was 0 until focus() was added.
+    // Explicit focus() before select() is DEFENSIVE, not a fix. `select()` already focuses the
+    // element in Chromium — measured directly 2026-08-18, and typing replaced the value with or
+    // without this line — but the HTML spec defines select() as setting the selection range, not
+    // as focusing, so leaning on the side effect is leaning on an implementation detail.
+    //
+    // ⚠️ A previous revision of this comment claimed select-on-open was BROKEN and that focus()
+    // repaired it. That was wrong. The evidence was a reading of selectionStart/selectionEnd,
+    // which are `null` on <input type="email"> because the selection API does not apply to that
+    // type — so the "selection length 0" it reported was an artefact of measuring a property
+    // that cannot have a value here, not a defect in this component.
     input.current?.focus();
     input.current?.select();
     const onDown = (e: MouseEvent) => {
