@@ -3,6 +3,8 @@ import {
   isListed,
   isProfileComplete,
   profileCompletenessSignals,
+  listedWhere,
+  bookableWhere,
 } from '@/lib/practitioner-indexer';
 
 /**
@@ -30,6 +32,8 @@ function makePractitioner(overrides: Partial<GateInput> = {}): GateInput {
     specialties: [{ specialtyId: 'spec_acupuncture' }],
     subscriptionStatus: 'NONE',
     trialEndsAt: null,
+    delistedAt: null,
+    archivedAt: null,
     user: { role: 'CLIENT' },
     ...overrides,
   };
@@ -153,5 +157,67 @@ describe('isListed — admin exemption', () => {
 
   it('the ADMIN exemption does not bypass profile completeness', () => {
     expect(isListed(makePractitioner({ user: { role: 'ADMIN' }, bio: null }))).toBe(false);
+  });
+});
+
+describe('isListed — operator vetoes (delistedAt / archivedAt)', () => {
+  /**
+   * These are the /admin/invites controls. They are VETOES, not exemptions: they must beat every
+   * clause of the OR, including the ADMIN exemption. The bug this guards is subtle — folding
+   * either into the OR leaves the gate passing for ordinary practitioners (their OR is satisfied
+   * some other way) and failing only for admins, who are exactly the accounts an operator is most
+   * likely to be hiding.
+   */
+  it('delisting hides an otherwise perfectly listable practitioner', () => {
+    expect(isListed(makePractitioner())).toBe(true);
+    expect(isListed(makePractitioner({ delistedAt: new Date() }))).toBe(false);
+  });
+
+  it('archiving hides an otherwise perfectly listable practitioner', () => {
+    expect(isListed(makePractitioner({ archivedAt: new Date() }))).toBe(false);
+  });
+
+  it('delisting beats an ACTIVE subscription', () => {
+    const paying = { subscriptionStatus: 'ACTIVE' as const, trialEndsAt: FAR_PAST };
+    expect(isListed(makePractitioner(paying))).toBe(true);
+    expect(isListed(makePractitioner({ ...paying, delistedAt: new Date() }))).toBe(false);
+  });
+
+  it('delisting beats the ADMIN exemption — an admin can hide their own profile', () => {
+    const admin = {
+      user: { role: 'ADMIN' as const },
+      subscriptionStatus: 'NONE' as const,
+      trialEndsAt: FAR_PAST,
+    };
+    expect(isListed(makePractitioner(admin))).toBe(true);
+    expect(isListed(makePractitioner({ ...admin, delistedAt: new Date() }))).toBe(false);
+    expect(isListed(makePractitioner({ ...admin, archivedAt: new Date() }))).toBe(false);
+  });
+
+  it('restoring (null again) puts them straight back', () => {
+    expect(isListed(makePractitioner({ delistedAt: null, archivedAt: null }))).toBe(true);
+  });
+});
+
+describe('listedWhere / bookableWhere — the asymmetry is load-bearing', () => {
+  /**
+   * Delisted stays BOOKABLE (§17 / PR #70: unlisted ≠ switched off — she still sends clients her
+   * own link). Archived is a soft delete and must NOT be bookable. A regression that adds
+   * delistedAt to bookableWhere() would 404 the Book buttons of every practitioner an operator
+   * merely hid from search — the exact defect PR #70 was written to remove.
+   */
+  it('listedWhere vetoes both', () => {
+    const w = listedWhere() as Record<string, unknown>;
+    expect(w.delistedAt).toBeNull();
+    expect(w.archivedAt).toBeNull();
+  });
+
+  it('bookableWhere vetoes archived ONLY — never delisted', () => {
+    const w = bookableWhere() as Record<string, unknown>;
+    expect(w.archivedAt).toBeNull();
+    expect(
+      'delistedAt' in w,
+      'delistedAt reached bookableWhere() — a delisted practitioner just lost her Book buttons',
+    ).toBe(false);
   });
 });

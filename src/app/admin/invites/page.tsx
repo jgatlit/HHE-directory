@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { Mail, Send, Ban, Check, Clock, RotateCcw } from 'lucide-react';
+import Link from 'next/link';
+import { Mail, Send, Ban, Check, Clock, RotateCcw, Eye, EyeOff, Archive, ArchiveRestore, AlertTriangle } from 'lucide-react';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { Card } from '@/components/ui/card';
@@ -11,18 +12,29 @@ import {
   resendInvitation,
   resetTrial,
   deleteInvitation,
+  setDelisted,
+  setArchived,
 } from './actions';
 import { DeleteInviteButton } from './DeleteInviteButton';
+import { ConfirmActionButton } from './ConfirmActionButton';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AdminInvitesPage() {
+export default async function AdminInvitesPage({
+  searchParams,
+}: {
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
   const session = await auth();
   if (!session?.user || session.user.role !== 'ADMIN') {
     redirect('/auth/signin?callbackUrl=/admin/invites');
   }
 
-  const invitations = await prisma.invitation.findMany({
+  const showArchived = searchParams?.archived === '1';
+  const errorCode = typeof searchParams?.error === 'string' ? searchParams.error : null;
+  const notice = typeof searchParams?.notice === 'string' ? searchParams.notice : null;
+
+  const allInvitations = await prisma.invitation.findMany({
     orderBy: { createdAt: 'desc' },
     take: 50,
     include: {
@@ -34,11 +46,67 @@ export default async function AdminInvitesPage() {
           // "trial expired" and an exempt admin "pre-trial" — and this is the screen with
           // the Reset button on it.
           role: true,
-          practitioner: { select: { trialEndsAt: true, subscriptionStatus: true } },
+          // Same shape as the byEmail fallback below — the two are used interchangeably at the
+          // call site, so a narrower select here would make the row's controls depend on which
+          // branch resolved it.
+          practitioner: {
+            select: {
+              id: true,
+              slug: true,
+              displayName: true,
+              trialEndsAt: true,
+              subscriptionStatus: true,
+              delistedAt: true,
+              archivedAt: true,
+            },
+          },
         },
       },
     },
   });
+
+  /*
+   * Resolve each row's practitioner by EMAIL, not by acceptedByUser.
+   *
+   * Twelve of the eighteen invitations were never accepted (they expired 2026-06-28), yet their
+   * practitioners exist and were operator-seeded — so keying the directory controls off
+   * `acceptedByUser` would render them on four rows and hide them from exactly the twelve
+   * profiles an operator needs to manage. `acceptedByUser` is still preferred where it exists;
+   * this is a fallback, not a replacement.
+   */
+  const byEmail = new Map(
+    (
+      await prisma.user.findMany({
+        where: { email: { in: allInvitations.map((i) => i.email) } },
+        select: {
+          email: true,
+          role: true,
+          practitioner: {
+            select: {
+              id: true,
+              slug: true,
+              displayName: true,
+              trialEndsAt: true,
+              subscriptionStatus: true,
+              delistedAt: true,
+              archivedAt: true,
+            },
+          },
+        },
+      })
+    ).map((u) => [u.email.toLowerCase(), u]),
+  );
+
+  const resolve = (email: string) => byEmail.get(email.toLowerCase()) ?? null;
+
+  // Archived profiles drop out of the default view — that is what makes archive a soft DELETE
+  // rather than another flag. They stay one click away rather than becoming unreachable.
+  const archivedCount = allInvitations.filter(
+    (inv) => resolve(inv.email)?.practitioner?.archivedAt,
+  ).length;
+  const invitations = showArchived
+    ? allInvitations
+    : allInvitations.filter((inv) => !resolve(inv.email)?.practitioner?.archivedAt);
 
   const now = new Date();
 
@@ -51,6 +119,40 @@ export default async function AdminInvitesPage() {
             Invite HHE-graduate practitioners to claim a profile. Magic-link delivered via email.
           </p>
         </header>
+
+        {/*
+          Surfaced, not swallowed. A delist writes a column AND pushes to Typesense, and the push
+          is the half that can fail — search is a separate system with its own availability. If
+          the operator is told "hidden" while the practitioner is still returned by /search, the
+          screen has lied about the only thing it was asked to do.
+        */}
+        {errorCode === 'index-out-of-sync' && (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+            <p>
+              <span className="font-medium">Saved, but search was not updated.</span> The profile
+              flag changed in the database and the Typesense push did not confirm — this
+              practitioner may still appear in search. Retry the toggle; if it keeps failing, run{' '}
+              <code className="rounded bg-muted px-1">npm run typesense:reindex</code>.
+            </p>
+          </div>
+        )}
+        {notice === 'index-unverified' && (
+          <div className="flex items-start gap-2 rounded-md border px-4 py-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            <p>
+              Saved. Search was <span className="font-medium">not</span> checked — Typesense is not
+              configured in this environment, so nothing was pushed and nothing was verified. On
+              production this notice should never appear.
+            </p>
+          </div>
+        )}
+        {errorCode === 'no-profile' && (
+          <div className="flex items-start gap-2 rounded-md border px-4 py-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            <p>That invitation has no practitioner profile attached, so there is nothing to hide.</p>
+          </div>
+        )}
 
         <Card className="space-y-3 p-5">
           <h2 className="text-sm font-semibold">Send a new invitation</h2>
@@ -76,10 +178,18 @@ export default async function AdminInvitesPage() {
         </Card>
 
         <Card className="overflow-hidden">
-          <div className="border-b bg-muted/40 px-5 py-3">
+          <div className="flex items-center justify-between gap-3 border-b bg-muted/40 px-5 py-3">
             <h2 className="text-sm font-semibold">
               Invitations <span className="text-muted-foreground">({invitations.length})</span>
             </h2>
+            {(archivedCount > 0 || showArchived) && (
+              <Link
+                href={showArchived ? '/admin/invites' : '/admin/invites?archived=1'}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                {showArchived ? 'Hide archived' : `Show archived (${archivedCount})`}
+              </Link>
+            )}
           </div>
           {invitations.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-muted-foreground">
@@ -94,7 +204,11 @@ export default async function AdminInvitesPage() {
                   : expired
                   ? 'expired'
                   : 'pending';
-                const practitioner = inv.acceptedByUser?.practitioner;
+                const resolved = resolve(inv.email);
+                const practitioner = inv.acceptedByUser?.practitioner ?? resolved?.practitioner;
+                const ownerRole = inv.acceptedByUser?.role ?? resolved?.role ?? null;
+                const delisted = Boolean(practitioner?.delistedAt);
+                const archived = Boolean(practitioner?.archivedAt);
                 const trialEndsAt = practitioner?.trialEndsAt ?? null;
                 const trialDaysLeft = trialEndsAt
                   ? Math.ceil((trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
@@ -102,7 +216,7 @@ export default async function AdminInvitesPage() {
                 // Same precedence as isListed(): admin and a live subscription both outrank
                 // the clock, so say so instead of reporting a stale countdown underneath them.
                 const trialLabel =
-                  inv.acceptedByUser?.role === 'ADMIN'
+                  ownerRole === 'ADMIN'
                     ? 'admin · exempt'
                     : practitioner?.subscriptionStatus === 'ACTIVE'
                     ? 'subscribed'
@@ -196,6 +310,79 @@ export default async function AdminInvitesPage() {
                           <Ban className="h-3.5 w-3.5" />
                         </button>
                       </form>
+                    )}
+                    {/*
+                      Directory controls. Rendered whenever a PROFILE exists — not only on
+                      accepted rows — because the twelve seeded pilots have profiles and no
+                      accepted invitation, and they are the ones most likely to need hiding.
+
+                      Delist and archive are deliberately separate controls rather than one
+                      three-state widget: delisting hides a WORKING practice from search while
+                      her own booking link keeps taking clients, and archiving closes the
+                      practice. Collapsing them would make the safe action and the destructive
+                      one adjacent positions of the same switch.
+                    */}
+                    {practitioner && !archived && (
+                      <>
+                        <Badge
+                          variant={delisted ? 'outline' : 'secondary'}
+                          className="whitespace-nowrap text-[10px]"
+                        >
+                          {delisted ? 'Hidden' : 'Listed'}
+                        </Badge>
+                        <form action={setDelisted}>
+                          <input type="hidden" name="id" value={inv.id} />
+                          <input type="hidden" name="on" value={delisted ? '0' : '1'} />
+                          <button
+                            type="submit"
+                            aria-label={
+                              delisted
+                                ? `List ${practitioner.displayName} in the directory again`
+                                : `Hide ${practitioner.displayName} from the directory`
+                            }
+                            title={
+                              delisted
+                                ? 'Show in directory again'
+                                : 'Hide from directory — profile URL and booking keep working'
+                            }
+                            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                          >
+                            {delisted ? (
+                              <Eye className="h-3.5 w-3.5" />
+                            ) : (
+                              <EyeOff className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </form>
+                        <ConfirmActionButton
+                          action={setArchived}
+                          fields={{ id: inv.id, on: '1' }}
+                          icon={<Archive className="h-3.5 w-3.5" />}
+                          idleLabel={`Archive ${practitioner.displayName}'s profile`}
+                          idleTitle="Archive — removes from directory and stops booking. Reversible."
+                          confirmText="Archive"
+                          confirmLabel={`Confirm archiving ${practitioner.displayName}'s profile`}
+                        />
+                      </>
+                    )}
+                    {practitioner && archived && (
+                      <>
+                        <Badge variant="outline" className="whitespace-nowrap text-[10px]">
+                          Archived
+                        </Badge>
+                        <form action={setArchived}>
+                          <input type="hidden" name="id" value={inv.id} />
+                          <input type="hidden" name="on" value="0" />
+                          <button
+                            type="submit"
+                            aria-label={`Restore ${practitioner.displayName}'s profile`}
+                            title="Restore — returns to the directory and to booking"
+                            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                          >
+                            <ArchiveRestore className="h-3.5 w-3.5" />
+                          </button>
+                        </form>
+                      </>
                     )}
                     {status !== 'accepted' && (
                       <DeleteInviteButton

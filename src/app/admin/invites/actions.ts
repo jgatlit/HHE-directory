@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { auth, signIn } from '@/auth';
 import { prisma } from '@/lib/prisma';
-import { indexPractitioner } from '@/lib/practitioner-indexer';
+import { indexPractitioner, indexPractitionerVerified } from '@/lib/practitioner-indexer';
 
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const TRIAL_DAYS = 90;
@@ -233,4 +233,83 @@ export async function resetTrial(formData: FormData): Promise<void> {
   );
 
   revalidatePath('/admin/invites');
+}
+
+/**
+ * The /admin/invites directory controls.
+ *
+ * Both resolve the practitioner the SAME way, and it is not the obvious way. Keying off
+ * `invitation.acceptedByUser` — which is how resetTrial does it — would put these controls on
+ * four rows out of eighteen, because the twelve pilot practitioners were operator-seeded and
+ * their invitations were never accepted (all twelve expired 2026-06-28). Those twelve are
+ * precisely the profiles an operator needs to manage. So the practitioner is resolved by the
+ * invitation's EMAIL, with acceptedByUser preferred when it exists.
+ */
+async function practitionerForInvitation(invitationId: string): Promise<string> {
+  const invitation = await prisma.invitation.findUnique({
+    where: { id: invitationId },
+    select: {
+      email: true,
+      acceptedByUser: { select: { practitioner: { select: { id: true } } } },
+    },
+  });
+  if (!invitation) redirect('/admin/invites?error=not-found');
+
+  const accepted = invitation.acceptedByUser?.practitioner?.id;
+  if (accepted) return accepted;
+
+  const byEmail = await prisma.user.findUnique({
+    where: { email: invitation.email },
+    select: { practitioner: { select: { id: true } } },
+  });
+  const id = byEmail?.practitioner?.id;
+  if (!id) redirect('/admin/invites?error=no-profile');
+  return id;
+}
+
+/**
+ * `redirect()` in Next.js works by THROWING. Any try/catch wrapped around a call to it swallows
+ * the redirect and the navigation silently never happens — so the Typesense work is done first,
+ * its outcome reduced to a plain value, and only then is redirect() reached, outside every catch.
+ */
+async function applyDirectoryFlag(
+  formData: FormData,
+  field: 'delistedAt' | 'archivedAt',
+): Promise<void> {
+  await requireAdmin();
+  const invitationId = String(formData.get('id') ?? '');
+  const on = String(formData.get('on') ?? '') === '1';
+  if (!invitationId) return;
+
+  const practitionerId = await practitionerForInvitation(invitationId);
+
+  await prisma.practitioner.update({
+    where: { id: practitionerId },
+    data: { [field]: on ? new Date() : null },
+  });
+
+  // Typesense is push-based: flipping the column in SQL alone changes NOTHING about who appears
+  // in /search. Nothing else will come along and fix it either — the trial sweep only visits
+  // practitioners whose trial has lapsed, so a delisted pilot with a null trial clock is
+  // invisible to it forever.
+  const sync = await indexPractitionerVerified(practitionerId);
+
+  revalidatePath('/admin/invites');
+  revalidatePath('/');
+
+  if (!sync.ok) {
+    console.error('Directory flag reindex failed:', { practitionerId, field, on, sync });
+    redirect('/admin/invites?error=index-out-of-sync');
+  }
+  if (!sync.verified) redirect('/admin/invites?notice=index-unverified');
+}
+
+/** Hide from DISCOVERY. The profile URL keeps working and booking keeps working. */
+export async function setDelisted(formData: FormData): Promise<void> {
+  await applyDirectoryFlag(formData, 'delistedAt');
+}
+
+/** Soft DELETE. Drops out of discovery AND booking; booking intents and payments are preserved. */
+export async function setArchived(formData: FormData): Promise<void> {
+  await applyDirectoryFlag(formData, 'archivedAt');
 }

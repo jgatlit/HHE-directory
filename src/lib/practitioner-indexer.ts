@@ -92,9 +92,16 @@ export function isListed(
   p: Parameters<typeof profileCompletenessSignals>[0] & {
     subscriptionStatus: SubscriptionStatus;
     trialEndsAt: Date | null;
+    delistedAt: Date | null;
+    archivedAt: Date | null;
     user: { role: Role };
   },
 ): boolean {
+  // Operator overrides are checked FIRST and deliberately sit OUTSIDE the OR below. They are not
+  // one more exemption to be weighed against the others — they are a veto. Folding either into
+  // the OR would make them unable to beat `role === 'ADMIN'`, i.e. an admin's own profile could
+  // never be hidden, which is precisely the case the toggle was asked for.
+  if (p.delistedAt !== null || p.archivedAt !== null) return false;
   const trialActive = p.trialEndsAt === null || p.trialEndsAt > new Date();
   return (
     isProfileComplete(p) &&
@@ -119,6 +126,11 @@ export function listedWhere(): Prisma.PractitionerWhereInput {
   // isListed() (which calls new Date() per invocation) correctly dropped them from Typesense.
   // That is exactly the drift this pair exists to prevent — just in time rather than in code.
   return {
+    // Operator vetoes, ANDed with everything else — never members of the OR, for the reason
+    // spelled out in isListed(). These two clauses are the only reason this pair can drift:
+    // add a veto here and you MUST add it there, and vice versa.
+    delistedAt: null,
+    archivedAt: null,
     displayName: { not: '' },
     cityId: { not: null },
     bio: { not: null },
@@ -173,6 +185,12 @@ const RETIREMENT_SENTINEL = new Date('1971-01-01T00:00:00.000Z');
  */
 export function bookableWhere(): Prisma.PractitionerWhereInput {
   return {
+    // `archivedAt` is here and `delistedAt` is NOT, and that asymmetry is the whole point.
+    // Delisting hides a working practice from the directory — she keeps taking bookings through
+    // the link she sends clients herself (§17, PR #70). Archiving is a soft DELETE, so it must
+    // also close the door: an archived row's Book buttons stop, exactly as a hard delete would,
+    // while the booking intents a hard delete would have cascaded away are preserved.
+    archivedAt: null,
     OR: [{ trialEndsAt: null }, { trialEndsAt: { gt: RETIREMENT_SENTINEL } }],
   };
 }
@@ -260,6 +278,73 @@ export async function indexAllPractitioners(): Promise<{ indexed: number }> {
     throw new Error(`Typesense indexing failed for ${failed.length}/${docs.length} documents`);
   }
   return { indexed: docs.length };
+}
+
+/**
+ * Reindex one practitioner AND CONFIRM Typesense agrees.
+ *
+ * `indexPractitioner()` + `deleteFromIndex()` cannot report failure: the latter swallows every
+ * error in a bare catch, so a delist that never reached Typesense is indistinguishable from one
+ * that did. That is tolerable for the cron sweeps, which run again tomorrow. It is NOT tolerable
+ * for an operator toggle, where the whole interaction is a person asserting "this practitioner is
+ * now hidden" and being shown a screen that says it worked.
+ *
+ * So this writes, then READS BACK, and reports the disagreement. Note the delete path
+ * distinguishes 404 (already absent — success) from every other error (a real failure): treating
+ * them alike is how "absent" and "unreachable" became the same answer in the first place.
+ *
+ * `verified: false` means Typesense is not configured in this environment, so the write was a
+ * no-op and nothing was checked — a distinct outcome from a confirmed sync, and never reported
+ * as one.
+ */
+export type IndexSyncResult =
+  | { ok: true; listed: boolean; verified: boolean }
+  | { ok: false; reason: string };
+
+async function documentExists(id: string): Promise<boolean> {
+  try {
+    await getTypesenseAdmin().collections(TYPESENSE_COLLECTION).documents(id).retrieve();
+    return true;
+  } catch (err) {
+    if ((err as { httpStatus?: number })?.httpStatus === 404) return false;
+    throw err;
+  }
+}
+
+export async function indexPractitionerVerified(id: string): Promise<IndexSyncResult> {
+  const p = await prisma.practitioner.findUnique({ where: { id }, include: PRACTITIONER_INCLUDE });
+  if (!p) return { ok: false, reason: 'practitioner-not-found' };
+
+  const listed = isListed(p);
+  if (!process.env.TYPESENSE_ADMIN_API_KEY) return { ok: true, listed, verified: false };
+
+  try {
+    if (listed) {
+      await getTypesenseAdmin()
+        .collections(TYPESENSE_COLLECTION)
+        .documents()
+        .upsert(toTypesenseDoc(p));
+    } else {
+      try {
+        await getTypesenseAdmin().collections(TYPESENSE_COLLECTION).documents(id).delete();
+      } catch (err) {
+        if ((err as { httpStatus?: number })?.httpStatus !== 404) throw err;
+      }
+    }
+  } catch (err) {
+    return { ok: false, reason: `write-failed: ${(err as Error)?.message ?? String(err)}` };
+  }
+
+  let present: boolean;
+  try {
+    present = await documentExists(id);
+  } catch (err) {
+    return { ok: false, reason: `verify-failed: ${(err as Error)?.message ?? String(err)}` };
+  }
+  if (present !== listed) {
+    return { ok: false, reason: `mismatch: expected indexed=${listed}, found ${present}` };
+  }
+  return { ok: true, listed, verified: true };
 }
 
 export async function deleteFromIndex(id: string): Promise<void> {
