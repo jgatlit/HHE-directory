@@ -203,3 +203,52 @@ describe('the controls are reachable from the admin UI', () => {
     expect(page).toMatch(/resolve\(inv\.email\)/);
   });
 });
+
+describe('admin control affordances say what they do', () => {
+  /**
+   * Both of these were found by CLICKING the shipped UI in a real browser (2026-08-18), after
+   * every structural and HTTP-level check had passed. Neither is reachable from server-rendered
+   * HTML — one is a focus/selection state, the other is a count whose wrongness only shows once
+   * you archive something. Pinned here so they cannot drift back.
+   */
+  const read = (...seg: string[]) =>
+    readFileSync(join(__dirname, '..', 'src', ...seg), 'utf8');
+
+  it('the email control FOCUSES before it selects', () => {
+    // `.select()` on an unfocused input sets a selection nothing can see and nothing types into.
+    // The component's own comment promises "one click and one retype"; without focus() that
+    // promise is false, which is the describes-a-state-it-does-not-implement defect this repo
+    // has now hit twice in the same directory.
+    // Anchor on the CALL EXPRESSIONS, not on bare `.focus()` / `.select()` — the explanatory
+    // comment above the code mentions both, so a substring search matches prose and measures
+    // the wrong thing. (It did, on the first attempt at this very test.)
+    const src = read('app', 'admin', 'invites', 'EditEmailControl.tsx');
+    const focusAt = src.indexOf('input.current?.focus()');
+    const selectAt = src.indexOf('input.current?.select()');
+    expect(focusAt, 'the email input is never focused on open').toBeGreaterThan(-1);
+    expect(selectAt, 'the email input is never selected on open').toBeGreaterThan(-1);
+    expect(
+      focusAt < selectAt,
+      'select() runs before focus() — the selection will not take',
+    ).toBe(true);
+  });
+
+  it('the archived count is per PRACTITIONER, not per invitation row', () => {
+    // One practitioner holds several invitations (jgatlit@gmail.com has two), and archiving is
+    // per-practitioner — so a row count said "(2)" after archiving ONE person.
+    const src = read('app', 'admin', 'invites', 'page.tsx');
+    expect(src, 'archivedCount is counting rows again').toMatch(
+      /archivedPractitionerIds\s*=\s*new Set\(/,
+    );
+    expect(src).toMatch(/const archivedCount = archivedPractitionerIds\.size/);
+    expect(
+      /archivedCount = allInvitations\.filter/.test(src),
+      'archivedCount reverted to a row-count filter',
+    ).toBe(false);
+  });
+
+  it('the archived affordance names practitioners and pluralises correctly', () => {
+    const src = read('app', 'admin', 'invites', 'page.tsx');
+    expect(src).toMatch(/archived practitioner\$\{archivedCount === 1 \? '' : 's'\}/);
+  });
+});

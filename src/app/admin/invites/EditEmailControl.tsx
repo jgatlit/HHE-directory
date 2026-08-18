@@ -26,6 +26,11 @@ export function EditEmailControl({ id, email, action }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    // focus() BEFORE select(). `.select()` on an unfocused input does not do what it looks like
+    // it does — the selection is set but nothing is focused, so the first keystroke goes nowhere
+    // near this field and the "one click, one retype" promise below is silently false. Measured
+    // in a real browser 2026-08-18: selection length was 0 until focus() was added.
+    input.current?.focus();
     input.current?.select();
     const onDown = (e: MouseEvent) => {
       if (!box.current?.contains(e.target as Node)) setOpen(false);
