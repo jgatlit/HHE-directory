@@ -81,8 +81,13 @@ export default async function Home({
   // Header identity. A signed-in practitioner should be offered their own page, not a sign-in
   // screen they have already passed. Resolved here rather than in SiteHeader because that is a
   // client component and there is no SessionProvider — mounting one around the whole tree to
-  // answer this would be a lot of machinery for one link. Null for signed-out visitors and for
-  // signed-in users with no practitioner record (e.g. an admin), who correctly keep "Sign in".
+  // answer this would be a lot of machinery for one link.
+  //
+  // `signedIn` is passed SEPARATELY from `profileHref` because the two answer different
+  // questions and only one of them gates sign-out. `profileHref` is null both for signed-out
+  // visitors and for signed-in users with no practitioner record (an admin, say), so it cannot
+  // distinguish them — keying sign-out off it would strand precisely those accounts with no way
+  // out of their session.
   const session = await auth();
   const ownProfile = session?.user?.id
     ? await prisma.practitioner.findUnique({
@@ -106,7 +111,7 @@ export default async function Home({
   return (
     <>
       <StructuredData practitioners={practitioners} description={DESCRIPTION} />
-      <SiteHeader profileHref={profileHref} />
+      <SiteHeader profileHref={profileHref} signedIn={Boolean(session?.user)} />
 
       <main id="main">
         {/* ── HERO ─────────────────────────────────────────────────────────
