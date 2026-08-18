@@ -73,6 +73,17 @@ Emails MUST be **transactional-shaped** (plain link, no button, no pitch, action
 
 ## The $59 anchor
 
+> **⚠️ SUPERSEDED 2026-08-18 — the price is $49/mo, not $59.** This spec is left as written
+> because it is a dated design record, but the number in it is stale and live code no longer
+> matches it: `SubscriptionSection` takes a `priceLabel` prop, and every caller passes `$49/mo`.
+> The reasoning below — that the anchor is a *messaging* property rather than a *billing* one, so
+> the pilot cohort reads a value without hitting a card wall — still holds exactly as written;
+> only the figure changed. Canonical price lives in `src/content/copy.ts` and
+> `docs/LAYER-X-SUBSCRIPTION.md`; the resolution is recorded in
+> `docs/PHASE-2C-WHOP-CONNECTED-ACCOUNTS.md`. This note exists because live code links here from
+> `SubscriptionSection`'s docstring, so a reader following that pointer would otherwise land on
+> a price we do not charge.
+
 `SubscriptionSection`: **"Your 90-day pilot · $59/mo value · free until {date}"** + countdown. The anchor is what they read.
 
 ## Reset trial

@@ -149,7 +149,7 @@ POST /checkout_configurations { mode:'payment', plan_id, metadata:{practitioner_
 
 `metadata` round-trips intact, which is the whole basis for retiring email-matching (§4.2b). Note the config carries `practitioner_id: "probe_validation_only"` and **there is no delete endpoint** for checkout configurations — it is inert (an unguessable URL for the normal listing plan) but it does exist.
 
-### 🚨 Price discrepancy — repo says $59/mo, Whop charges $49/mo
+### Price — ✅ mismatch 1 RESOLVED at $49/mo · ⚠️ mismatch 2 still open
 
 The live plan `plan_5YdWsNzoCg3Z3` on product `prod_tVk25TdpND5jf` "Pro Practitioner Membership" is:
 
@@ -157,12 +157,20 @@ The live plan `plan_5YdWsNzoCg3Z3` on product `prod_tVk25TdpND5jf` "Pro Practiti
 plan_type renewal · initial_price $0.00 · renewal_price $49.00 · billing_period 30 days
 ```
 
-But `docs/LAYER-X-SUBSCRIPTION.md` and the UI say **"Subscribe · $59/mo"**. Two mismatches:
+Two mismatches were recorded here. Their status as of **2026-08-18**:
 
-1. **$59 advertised vs $49 charged.**
-2. **`initial_price` is $0** — the first period is free, then $49/mo. Nothing in the product copy says that.
-
-This is a live billing-vs-copy mismatch on the primary revenue line. **Needs an operator decision** — change the plan to match the copy, or change the copy to match the plan. Not something to guess at.
+1. ✅ **$59 advertised vs $49 charged — RESOLVED, settled at $49.** The operator decision went to
+   the plan, not the copy. Everything the practitioner can see now reads $49: `src/content/copy.ts`
+   (`price: '$49'`), the edit page's `priceLabel="$49/mo"`, both trial-sweep emails, and
+   `docs/LAYER-X-SUBSCRIPTION.md`. The last two stale `$59` strings — comments in
+   `prisma/schema.prisma` — were corrected the same day. **$49 is canonical; treat any surviving
+   `$59` in this repo as a dated artifact, not a price.**
+2. ⚠️ **`initial_price` is $0 — STILL OPEN.** The first 30-day period is free, then $49/mo. The
+   UI says only `Subscribe · $49/mo`; nothing a practitioner reads mentions the free first period.
+   `docs/LAYER-X-SUBSCRIPTION.md` records it, but that is an internal doc, not product copy.
+   Under-charging relative to the advertised price is a benign direction to be wrong in, which is
+   exactly why it has survived — it produces no complaint. It is still a billing-vs-copy gap on
+   the primary revenue line, and it is unresolved. **Operator decision, unchanged.**
 
 ### Resolved env
 
@@ -193,7 +201,7 @@ Pre-existing and untouched: `WHOP_API_KEY` (legacy app key), `WHOP_WEBHOOK_SECRE
 
 | Layer | Status |
 |---|---|
-| **Layer X** — practitioner pays NHP $59/mo | **LIVE.** Hosted Whop product page via `WHOP_PLATFORM_CHECKOUT_URL`; webhook at `/api/whop/webhook` using `@whop/api`'s `makeWebhookValidator`; flips `subscriptionStatus` → drives the listing gate + Typesense reindex. |
+| **Layer X** — practitioner pays NHP $49/mo | **LIVE.** Hosted Whop product page via `WHOP_PLATFORM_CHECKOUT_URL`; webhook at `/api/whop/webhook` using `@whop/api`'s `makeWebhookValidator`; flips `subscriptionStatus` → drives the listing gate + Typesense reindex. |
 | **Layer Y** — patient pays practitioner | **Catalog-only.** `WhopProduct` rows are created by `createOffering()` in the edit page and rendered on the profile, but `whopProductId` / `whopPlanId` / `purchaseUrl` stay `null`. No checkout exists. The editor tells practitioners *"online checkout turns on once your Whop payments…"*. |
 | `src/lib/whop.ts` | Stubs that throw `WhopPlatformsAccessNotConfigured`, gated behind `WHOP_PLATFORMS_ENABLED` + `WHOP_PARENT_COMPANY_ID` — **neither env var is set**. |
 | `/admin/connected-accounts`, `/admin/whop-webhooks` | Shipped, rendering empty/`NOT_STARTED` state. |
@@ -233,7 +241,7 @@ Easy to conflate, so state it plainly. After this ships, a practitioner is simul
 
 | Role | Whop relationship | Money flows | Billed on |
 |---|---|---|---|
-| **Layer X** — Directory subscriber | a **member** of `biz_Vpj1G2ryNdPCG0` holding a membership on our $59/mo product | practitioner → **us** | **our own** company |
+| **Layer X** — Directory subscriber | a **member** of `biz_Vpj1G2ryNdPCG0` holding a membership on our $49/mo product | practitioner → **us** | **our own** company |
 | **Layer Y** — service seller | a **connected account** whose `parent_company_id` is `biz_Vpj1G2ryNdPCG0` | patient → **practitioner** | **their** connected company |
 
 These are independent paths that never touch each other's funds. They share exactly one thing: **the same Company API key** unlocks both. That is why one dashboard action clears both layers at once.
@@ -504,7 +512,7 @@ Verify with `GET /api/v1/webhooks?company_id=biz_Vpj1G2ryNdPCG0` (was empty befo
 
 Worth stating, since it's most of the system:
 
-- **Layer X is untouched.** $59/mo listing subscription, its webhook, and the listing gate all keep working exactly as they do now.
+- **Layer X is untouched.** $49/mo listing subscription, its webhook, and the listing gate all keep working exactly as they do now.
 - `WhopProduct`, `WhopWebhookEvent`, `/admin/connected-accounts`, `/admin/whop-webhooks`, and the offerings editor keep their current shape.
 - Booking links, search, profiles, auth gates: unaffected.
 
