@@ -252,17 +252,32 @@ model Practitioner {
   whopProducts          WhopProduct[]
 
   // Layer X — platform subscription (practitioner pays $59/mo to be listed; pilots trial for 90 days)
-  subscriptionStatus          SubscriptionStatus @default(NONE)
+  subscriptionStatus SubscriptionStatus @default(NONE)
   /// DEPRECATED — superseded by trialEndsAt + the ADMIN exemption (see
   /// docs/superpowers/specs/2026-07-16-pilot-trial-design.md). No longer read by isListed().
   /// Column retained one release so the live deployment does not break the moment the
   /// migration applies (expand/contract); drop it in a follow-up once nothing reads it.
-  comped                      Boolean            @default(false)
+  comped             Boolean            @default(false)
   /// 90-day pilot clock. null = pre-trial (operator-seeded, never onboarded) and still listed;
   /// future = trial running; past = expired. Set ONLY by genuine onboarding — never inferred
   /// from a seed date. Admins are exempt from it entirely.
-  trialEndsAt                 DateTime?
-  whopMembershipId            String?            @unique // membership on our own $59/mo Whop product
+  trialEndsAt        DateTime?
+
+  /// OPERATOR DIRECTORY CONTROLS (/admin/invites). Two columns, not one, because they answer
+  /// different questions and the repo has already been bitten by overloading a single field
+  /// with two meanings (see RETIREMENT_SENTINEL in practitioner-indexer.ts).
+  ///
+  /// `delistedAt` — hidden from DISCOVERY, still a working practice. Drops out of /search, the
+  /// home page and Typesense; the direct profile URL keeps resolving and BOOKING KEEPS WORKING.
+  /// That is the §17 rule that unlisted ≠ unbookable, so this must never reach bookableWhere().
+  /// Reversible: null it and the profile returns.
+  delistedAt DateTime?
+  /// `archivedAt` — soft DELETE. Chosen over a destructive delete so booking intents (leads and
+  /// real payment records) survive; a hard delete cascades them away irreversibly. Drops out of
+  /// discovery AND out of booking, and hides the row from the admin list by default. Reversible.
+  archivedAt DateTime?
+
+  whopMembershipId            String? @unique // membership on our own $59/mo Whop product
   /// Per-practitioner checkout for the monthly listing plan, minted once and reused. Carries
   /// metadata.practitioner_id so the webhook attributes payment directly instead of matching on
   /// email — which silently fails when someone pays from a different address than their profile.
@@ -474,7 +489,7 @@ model WhopProduct {
 /// step 1 is captured before anything external is touched, so a dead scheduler link or a failed
 /// checkout still leaves the practitioner a real contact.
 model BookingIntent {
-  id             String       @id @default(cuid())
+  id String @id @default(cuid())
 
   /// THE PUBLIC ADDRESS OF THIS INTENT — what appears in `/practitioners/[slug]/book/[token]`.
   ///
@@ -524,20 +539,20 @@ model BookingIntent {
   ///
   /// Stored so it is minted once rather than on every render of a public page. Configurations do
   /// NOT expire, so this stays valid however late §10's resume email brings the buyer back.
-  whopCheckoutSessionId String?
+  whopCheckoutSessionId        String?
   /// That configuration's OWN `purchase_url` — the §8 fallback when the embed cannot mount.
   ///
   /// Per-intent, so unlike the offering-level `purchaseUrl` it carries `booking_intent_id` and a
   /// payment taken through it still reconciles. The offering-level one carries only
   /// practitioner_id + offering_id, which is why a payment through it could complete and be
   /// recorded against no booking.
-  whopCheckoutPurchaseUrl String?
+  whopCheckoutPurchaseUrl      String?
   /// DEPRECATED — sessions expired, configurations do not. Nothing reads this; dropped a release
   /// after the currently-deployed code stops referencing it (expand/contract).
   whopCheckoutSessionExpiresAt DateTime?
   /// Set by the `payment.succeeded` webhook, which is the AUTHORITY for payment — never by a
   /// client callback. Its presence is what makes marking PAID idempotent.
-  paidAt                DateTime?
+  paidAt                       DateTime?
 
   status         BookingIntentStatus @default(PENDING)
   /// Null until step 2 is passed. See ScheduleSignal — ASSUMED is a valid, expected outcome.
