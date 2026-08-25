@@ -40,6 +40,11 @@ export default async function AdminInvitesPage({
   const bulkReused = typeof searchParams?.bulk_reused === 'string' ? Number(searchParams.bulk_reused) : 0;
   const bulkInvalid = typeof searchParams?.bulk_invalid === 'string' ? Number(searchParams.bulk_invalid) : 0;
   const bulkFailed = typeof searchParams?.bulk_failed === 'string' ? Number(searchParams.bulk_failed) : 0;
+  const bulkOverflow = typeof searchParams?.bulk_overflow === 'string' ? Number(searchParams.bulk_overflow) : 0;
+  const bulkInvalidList =
+    typeof searchParams?.bulk_invalid_list === 'string' ? searchParams.bulk_invalid_list : null;
+  const bulkFailedList =
+    typeof searchParams?.bulk_failed_list === 'string' ? searchParams.bulk_failed_list : null;
 
   const allInvitations = await prisma.invitation.findMany({
     orderBy: { createdAt: 'desc' },
@@ -186,15 +191,36 @@ export default async function AdminInvitesPage({
         {bulkCreated !== null && (
           <div className="flex items-start gap-2 rounded-md border px-4 py-3 text-sm">
             <Send className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-            <p>
-              <span className="font-medium">Bulk invite: {bulkCreated} sent</span>
-              {bulkReused > 0 && `, ${bulkReused} already pending (link reused)`}
-              {bulkInvalid > 0 && `, ${bulkInvalid} skipped (not a usable email)`}
-              {bulkFailed > 0 && (
-                <span className="text-destructive">, {bulkFailed} failed to send</span>
+            <div className="space-y-1">
+              <p>
+                <span className="font-medium">Bulk invite: {bulkCreated} new invitation email{bulkCreated === '1' ? '' : 's'} sent</span>
+                {bulkReused > 0 &&
+                  // Reused means the LINK was reused, not that no email went out — sending an
+                  // email is unconditional in inviteOne(). Saying otherwise here would tell an
+                  // admin a re-paste is free when it isn't.
+                  `, plus ${bulkReused} resent to addresses with an existing pending invitation`}
+                .
+              </p>
+              {bulkInvalid > 0 && (
+                <p className="text-muted-foreground">
+                  {bulkInvalid} skipped as not a usable email address
+                  {bulkInvalidList ? `: ${bulkInvalidList}` : ''}.
+                </p>
               )}
-              .
-            </p>
+              {bulkFailed > 0 && (
+                <p className="text-destructive">
+                  {bulkFailed} failed to send{bulkFailedList ? `: ${bulkFailedList}` : ''} — safe
+                  to retry just these, resending the whole list would re-invite everyone above too.
+                </p>
+              )}
+              {bulkOverflow > 0 && (
+                <p className="text-destructive">
+                  {bulkOverflow} address{bulkOverflow === 1 ? '' : 'es'} at the end of the paste{' '}
+                  {bulkOverflow === 1 ? 'was' : 'were'} not sent — one submission is capped at 50.
+                  Paste the rest separately.
+                </p>
+              )}
+            </div>
           </div>
         )}
         {errorCode === 'no-profile' && (
@@ -234,6 +260,7 @@ export default async function AdminInvitesPage({
               name="emails"
               required
               rows={4}
+              aria-label="Email addresses to invite, one per line or comma-separated"
               placeholder={'One email per line, or paste a comma-separated list —\npractitioner1@example.com\npractitioner2@example.com'}
               className="w-full resize-y rounded-md border bg-card px-3 py-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
             />
@@ -246,8 +273,9 @@ export default async function AdminInvitesPage({
             </button>
           </form>
           <p className="text-xs text-muted-foreground">
-            Same behavior as a single invite, run once per address — duplicates in the list and
-            addresses already pending are skipped or reused, never double-sent.
+            Same behavior as a single invite, run once per address — duplicates in the list are
+            only invited once, and an address with a pending invitation gets that link resent
+            (not a second, separate one). Capped at 50 addresses per submission.
           </p>
         </Card>
 

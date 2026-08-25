@@ -69,8 +69,8 @@ export type InviteOutcome = 'created' | 'reused' | 'invalid' | 'send-failed';
  * emails, aggregates the outcomes instead of redirecting per-row).
  */
 async function inviteOne(rawEmail: string, invitedById: string): Promise<InviteOutcome> {
-  const email = rawEmail.trim().toLowerCase();
-  if (!email || !email.includes('@')) return 'invalid';
+  const email = normalizeEmail(rawEmail);
+  if (!email) return 'invalid';
 
   // Idempotency: reuse pending unexpired invitation for this email if present.
   const existing = await prisma.invitation.findFirst({
@@ -132,6 +132,16 @@ export async function createInvitation(formData: FormData): Promise<void> {
 }
 
 /**
+ * Hard cap on one bulk-invite submission. Two reasons, not one: it bounds the wall-clock of a
+ * sequential loop that does a Resend call per row, and — more importantly — it bounds the
+ * unrecoverable-partial-state risk if the request DOES time out. Re-pasting after a partial run
+ * would re-invite everyone who already succeeded (the send is unconditional, see `inviteOne`),
+ * so keeping a single run small keeps that failure mode small too. 50 comfortably covers the
+ * cohort this was built for (the first 15-17 practitioners) with room to grow.
+ */
+const MAX_BULK = 50;
+
+/**
  * MANY EMAILS, ONE SUBMIT. Reuses `inviteOne` per address rather than reimplementing the
  * idempotency/rollback logic — a batch is just createInvitation run N times with the outcomes
  * collected instead of redirected on.
@@ -140,22 +150,28 @@ export async function createInvitation(formData: FormData): Promise<void> {
  * concurrently against a magic-link sender that's already a rate-limit target elsewhere in this
  * app is the wrong place to first find that out. A CSV of this size is an admin paving a list,
  * not a hot path — a few seconds of sequential sends is the safe trade.
+ *
+ * Failed and invalid addresses are named back to the admin, not just counted — a bare "3 failed"
+ * on a 20-row paste gives nobody anything to act on, and re-running the whole paste to retry
+ * three rows would re-invite the seventeen that already worked.
  */
 export async function createInvitationsBulk(formData: FormData): Promise<void> {
   const session = await requireAdmin();
   const raw = String(formData.get('emails') ?? '');
 
   // Accept newline, comma, or semicolon separated — whatever a practitioner list pastes in as.
-  const candidates = raw
+  const allCandidates = raw
     .split(/[\n,;]+/)
     .map((e) => e.trim())
     .filter((e) => e.length > 0);
+  const overflow = Math.max(0, allCandidates.length - MAX_BULK);
+  const candidates = allCandidates.slice(0, MAX_BULK);
 
   const seen = new Set<string>();
   let created = 0;
   let reused = 0;
-  let invalid = 0;
-  let failed = 0;
+  const invalidEmails: string[] = [];
+  const failedEmails: string[] = [];
 
   for (const candidate of candidates) {
     const normalized = candidate.toLowerCase();
@@ -165,14 +181,22 @@ export async function createInvitationsBulk(formData: FormData): Promise<void> {
     const outcome = await inviteOne(candidate, session.user.id);
     if (outcome === 'created') created += 1;
     else if (outcome === 'reused') reused += 1;
-    else if (outcome === 'invalid') invalid += 1;
-    else failed += 1;
+    else if (outcome === 'invalid') invalidEmails.push(candidate);
+    else failedEmails.push(candidate);
   }
 
   revalidatePath('/admin/invites');
-  redirect(
-    `/admin/invites?bulk_created=${created}&bulk_reused=${reused}&bulk_invalid=${invalid}&bulk_failed=${failed}`,
-  );
+
+  const params = new URLSearchParams({
+    bulk_created: String(created),
+    bulk_reused: String(reused),
+    bulk_invalid: String(invalidEmails.length),
+    bulk_failed: String(failedEmails.length),
+    bulk_overflow: String(overflow),
+  });
+  if (invalidEmails.length) params.set('bulk_invalid_list', invalidEmails.join(','));
+  if (failedEmails.length) params.set('bulk_failed_list', failedEmails.join(','));
+  redirect(`/admin/invites?${params.toString()}`);
 }
 
 export async function revokeInvitation(formData: FormData): Promise<void> {
