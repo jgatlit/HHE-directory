@@ -37,6 +37,7 @@ async function generateUniqueSlug(email: string): Promise<string> {
 const withSpecialties = {
   city: true,
   specialties: { include: { specialty: true }, orderBy: SPECIALTY_ORDER },
+  user: { select: { termsAcceptedAt: true } },
 } as const;
 
 // docs/superpowers/specs/2026-07-16-pilot-trial-design.md — "Pilot" is a 90-day trial, not a
@@ -186,6 +187,7 @@ export default async function OnboardingPage({ searchParams }: Props) {
       specialties={specialties.map((s) => ({ id: s.id, name: s.name }))}
       aliases={approvedAliases}
       initialSpecialties={initialSpecialties}
+      termsAcceptedAt={practitioner.user.termsAcceptedAt}
     />
   );
 }
