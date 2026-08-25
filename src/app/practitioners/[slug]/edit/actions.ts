@@ -38,7 +38,13 @@ async function authorizeForSlug(slug: string) {
   if (!isOwner && !isAdmin) {
     redirect('/auth/error?error=AccessDenied');
   }
-  return practitioner;
+  // Additive — every existing caller ignores the new field, so this doesn't touch their behavior.
+  // Exists for callers (currently just submitOnboarding) that need to distinguish "the profile
+  // owner, acting for themselves" from "an admin acting on their behalf" — an ADMIN reaching a
+  // slug they don't own is an intentional, existing capability (support workflows), but some
+  // decisions — recording consent, not just editing fields — must never be attributable to the
+  // wrong person regardless of who is authorized to make the edit.
+  return { ...practitioner, isOwner };
 }
 
 function buildSearchText(parts: (string | null | undefined)[]): string {
@@ -713,16 +719,25 @@ export async function removeCaseStudy(slug: string, caseStudyId: string): Promis
 export async function submitOnboarding(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
 
-  // Required only the first time — a practitioner who already accepted (revisiting /onboarding
-  // to finish an incomplete profile) is not made to re-read the whole document to save progress.
-  // The HTML `required` attribute on the checkbox already blocks a client-side submit while
-  // unaccepted; this is the server-side backstop a hand-crafted POST can't skip.
+  // authorizeForSlug lets an ADMIN act on any slug — a deliberate, existing capability for
+  // support workflows. Consent is different: a click has to be the PRACTITIONER'S OWN, or the
+  // record is false on its face. `target.isOwner` (not merely "authorized") is what gates it, so
+  // an admin completing onboarding on someone else's behalf can still create/update the profile
+  // (the existing support capability, untouched) without ever having their own click recorded as
+  // that practitioner's personal acceptance of the Terms.
+  //
+  // Required only the first time, and only for the practitioner themselves — accepting on
+  // revisit (finishing an incomplete profile) isn't re-asked, and an admin acting on someone
+  // else's behalf is never asked at all (nothing here blocks their edit, it just never sets
+  // termsAcceptedAt on someone else's say-so). The HTML `required` attribute on the checkbox
+  // already blocks a client-side submit while unaccepted; this is the server-side backstop a
+  // hand-crafted POST can't skip.
   const existingUser = await prisma.user.findUnique({
     where: { id: target.userId },
     select: { termsAcceptedAt: true },
   });
   const alreadyAcceptedTerms = !!existingUser?.termsAcceptedAt;
-  if (!alreadyAcceptedTerms && formData.get('termsAccepted') !== 'on') {
+  if (target.isOwner && !alreadyAcceptedTerms && formData.get('termsAccepted') !== 'on') {
     redirect(`/practitioners/${slug}/edit?error=terms-required`);
   }
 
@@ -814,9 +829,14 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
     );
     const rawLabels = resolved.map((r) => r.rawLabel);
 
-    if (!alreadyAcceptedTerms) {
-      await tx.user.update({
-        where: { id: target.userId },
+    if (target.isOwner && !alreadyAcceptedTerms) {
+      // updateMany + a `termsAcceptedAt: null` guard, not update(): alreadyAcceptedTerms was read
+      // outside this transaction, before the (potentially slow — city resolution, an LLM draft
+      // call) work above. Two concurrent submits (double-click, a retry) could both read it as
+      // false and both reach here; the guard makes the second one a no-op instead of silently
+      // overwriting the first acceptance's timestamp with its own, later one.
+      await tx.user.updateMany({
+        where: { id: target.userId, termsAcceptedAt: null },
         data: { termsAcceptedAt: new Date() },
       });
     }

@@ -20,7 +20,16 @@ export function TermsAcknowledgment({ acceptedAt }: { acceptedAt: Date | null })
       <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
         <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
         You accepted our Terms &amp; Conditions on{' '}
-        {acceptedAt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.
+        {/* This renders server-side with no client re-render to correct it, so an implicit
+            server-local (Vercel = UTC) timezone would silently show the wrong calendar day to
+            anyone who accepted near a day boundary in their own timezone. Pinned explicitly,
+            matching SubscriptionSection's trialEndsAtLabel — same reasoning, same fix. */}
+        {acceptedAt.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          timeZone: 'UTC',
+        })}.
       </div>
     );
   }
