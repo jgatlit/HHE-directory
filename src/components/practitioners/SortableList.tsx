@@ -51,11 +51,17 @@ export function SortableList<T extends { id: string }>({
   items,
   onReorder,
   orientation = 'vertical',
+  getItemLabel,
   children,
 }: {
   items: T[];
   onReorder: (next: T[]) => void;
   orientation?: Orientation;
+  /** Per-item aria-label for that row's drag handle. Omit for the generic default — fine for a
+   *  list where "which item" doesn't need to be spoken aloud; supply it for a list (like
+   *  offerings) where the rows are distinct enough that a screen-reader user benefits from
+   *  hearing which one a given handle grabs, rather than an identical label on every row. */
+  getItemLabel?: (item: T, index: number) => string;
   children: (item: T, index: number, handle: ReactNode) => ReactNode;
 }) {
   // Reordering is React state, not a DOM edit, so it emits no input/change event and the profile
@@ -97,7 +103,12 @@ export function SortableList<T extends { id: string }>({
         strategy={orientation === 'vertical' ? verticalListSortingStrategy : rectSortingStrategy}
       >
         {items.map((item, index) => (
-          <SortableRow key={item.id} id={item.id} orientation={orientation}>
+          <SortableRow
+            key={item.id}
+            id={item.id}
+            orientation={orientation}
+            label={getItemLabel?.(item, index)}
+          >
             {(handle) => children(item, index, handle)}
           </SortableRow>
         ))}
@@ -110,10 +121,12 @@ export function SortableList<T extends { id: string }>({
 function SortableRow({
   id,
   orientation,
+  label,
   children,
 }: {
   id: string;
   orientation: Orientation;
+  label?: string;
   children: (handle: ReactNode) => ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -125,7 +138,7 @@ function SortableRow({
       type="button"
       {...attributes}
       {...listeners}
-      aria-label="Reorder — press space, then use the arrow keys"
+      aria-label={label ?? 'Reorder — press space, then use the arrow keys'}
       className={
         orientation === 'vertical'
           ? 'mt-1.5 shrink-0 cursor-grab rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 active:cursor-grabbing'
