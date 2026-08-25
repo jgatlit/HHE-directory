@@ -274,6 +274,23 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                   </ul>
                 </section>
               )}
+
+              {/* Queue item 8 (2026-08-25) — coming-soon placeholder ONLY. Reviews aren't built:
+                  Jonathan deferred them on the 08-18 call until there's "a critical mass of
+                  practitioners using Google reviews" to plug into instead of building a bespoke
+                  system now. Case studies/manual testimonials are a separate, buildable-now piece
+                  still blocked on Amy's authenticity policy — this section is about neither of
+                  those, just the plain fact that reviews are coming.
+                  Deliberately informational, not a button or a greyed-out tile: the 08-11 call's
+                  A4 ruling removed a similar-looking disabled-tile CTA pattern for reading as
+                  broken on a live profile. No click target, no disabled state — just a quiet,
+                  permanent note next to whatever else this section of the page is showing. */}
+              <section
+                aria-label="Reviews"
+                className="rounded-xl bg-secondary/40 p-6 text-center text-xs text-muted-foreground"
+              >
+                Client reviews are coming to Natural Health Pros soon.
+              </section>
             </div>
           </div>
 
