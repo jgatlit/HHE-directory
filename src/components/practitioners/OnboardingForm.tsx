@@ -3,6 +3,7 @@ import { Separator } from '@/components/ui/separator';
 import { SpecialtyComboboxField } from '@/components/practitioners/SpecialtyComboboxField';
 import { OnboardingSubmitButton } from '@/components/practitioners/OnboardingSubmitButton';
 import { CityField } from '@/components/practitioners/CityField';
+import { TermsAcknowledgment } from '@/components/practitioners/TermsAcknowledgment';
 
 type Props = {
   action: (formData: FormData) => void | Promise<void>;
@@ -20,6 +21,7 @@ type Props = {
   specialties: { id: string; name: string }[];
   aliases: { label: string; specialtyId: string }[];
   initialSpecialties: { specialtyId: string; rawLabel: string }[];
+  termsAcceptedAt: Date | null;
 };
 
 /**
@@ -36,6 +38,7 @@ export function OnboardingForm({
   specialties,
   aliases,
   initialSpecialties,
+  termsAcceptedAt,
 }: Props) {
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-14">
@@ -129,6 +132,8 @@ export function OnboardingForm({
             </Field>
 
             <Separator />
+
+            <TermsAcknowledgment acceptedAt={termsAcceptedAt} />
 
             <div className="flex flex-col gap-3">
               <OnboardingSubmitButton isPrefilled={isPrefilled} />

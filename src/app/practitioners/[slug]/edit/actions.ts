@@ -713,6 +713,19 @@ export async function removeCaseStudy(slug: string, caseStudyId: string): Promis
 export async function submitOnboarding(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
 
+  // Required only the first time — a practitioner who already accepted (revisiting /onboarding
+  // to finish an incomplete profile) is not made to re-read the whole document to save progress.
+  // The HTML `required` attribute on the checkbox already blocks a client-side submit while
+  // unaccepted; this is the server-side backstop a hand-crafted POST can't skip.
+  const existingUser = await prisma.user.findUnique({
+    where: { id: target.userId },
+    select: { termsAcceptedAt: true },
+  });
+  const alreadyAcceptedTerms = !!existingUser?.termsAcceptedAt;
+  if (!alreadyAcceptedTerms && formData.get('termsAccepted') !== 'on') {
+    redirect(`/practitioners/${slug}/edit?error=terms-required`);
+  }
+
   const displayName = String(formData.get('displayName') ?? '').trim();
   if (!displayName) {
     redirect(`/practitioners/${slug}/edit?error=name-required`);
@@ -800,6 +813,13 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
       new Set(specialtyRows.flatMap((s) => (s.parent ? [s.name, s.parent.name] : [s.name]))),
     );
     const rawLabels = resolved.map((r) => r.rawLabel);
+
+    if (!alreadyAcceptedTerms) {
+      await tx.user.update({
+        where: { id: target.userId },
+        data: { termsAcceptedAt: new Date() },
+      });
+    }
 
     await tx.practitionerSpecialty.deleteMany({ where: { practitionerId: target.id } });
     await tx.practitioner.update({

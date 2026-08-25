@@ -307,6 +307,14 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             <p className="text-xs text-destructive">Display name is required.</p>
           </Card>
         )}
+        {searchParams.error === 'terms-required' && (
+          <Card className="border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive">
+              You need to accept the Terms &amp; Conditions to continue. Go back and check the box
+              at the bottom of the form.
+            </p>
+          </Card>
+        )}
         {searchParams.error === 'invalid-booking-url' && (
           <Card className="border-destructive/30 bg-destructive/5 p-3">
             <p className="text-xs text-destructive">

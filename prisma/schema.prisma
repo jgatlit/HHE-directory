@@ -18,12 +18,12 @@ datasource db {
 // ----- NextAuth v5 tables (Prisma adapter contract) -----
 
 model User {
-  id             String    @id @default(cuid())
-  name           String?
-  email          String    @unique
-  emailVerified  DateTime?
-  image          String?
-  role           Role      @default(CLIENT)
+  id              String    @id @default(cuid())
+  name            String?
+  email           String    @unique
+  emailVerified   DateTime?
+  image           String?
+  role            Role      @default(CLIENT)
   /// Session revocation counter. Every issued JWT carries the value it was minted with; the
   /// `jwt` callback invalidates any token whose value no longer matches. Bumping this signs the
   /// user out EVERYWHERE, immediately.
@@ -36,9 +36,15 @@ model User {
   /// Note this is NOT how a demotion takes effect. Role is re-read per request, and a demoted
   /// admin should stay signed in as a practitioner rather than be thrown out. Bump this only to
   /// KILL sessions — a suspected token compromise, a lost device, an offboarding.
-  sessionVersion Int       @default(0)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  sessionVersion  Int       @default(0)
+  /// Set once, at first genuine onboarding (submitOnboarding), never overwritten on a later
+  /// revisit. Null means "never asked" for anyone who reached this schema before the click-to-
+  /// acknowledge step existed (the 12 pilot practitioners onboarded before 2026-08-25) — treat
+  /// null as "not yet accepted", not as a bug; there is no retroactive backfill for a
+  /// not-yet-final draft (see docs/runbooks or _handoff-context/tc-draft.md for the open gaps).
+  termsAcceptedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   accounts            Account[]
   sessions            Session[]
