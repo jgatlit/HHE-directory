@@ -53,6 +53,14 @@ type Props = {
 
 export const dynamic = 'force-dynamic';
 
+// Named once, referenced everywhere it's needed: the profile form's id and BookingLinksField's
+// `formId` prop (which each of its inputs uses as `form={formId}` to submit with this form despite
+// rendering outside its DOM subtree — see BookingLinksField's own doc comment) must be the exact
+// same string, or those fields silently drop out of the submission with no error. Two independent
+// string literals kept in sync "by convention" is exactly how that drift happens; one constant
+// makes it impossible.
+const PROFILE_FORM_ID = 'profile-form';
+
 export default async function EditPractitionerPage({ params, searchParams }: Props) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -383,7 +391,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
         )}
 
         <Card className="p-6 sm:p-8">
-          <form id="profile-form" action={action} className="space-y-5">
+          <form id={PROFILE_FORM_ID} action={action} className="space-y-5">
             {/* Optimistic-concurrency token. Compared server-side before any write, so a save from
                 a stale tab (or from an admin editing this profile in support) is refused instead of
                 silently discarding the other editor's rows.
@@ -657,7 +665,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
                 it by dropping the key. */}
             <BookingLinksField
               key={practitioner.bookingLinks.map((b) => b.id).join(',')}
-              formId="profile-form"
+              formId={PROFILE_FORM_ID}
               initial={practitioner.bookingLinks.map((b) => ({
                 id: b.id,
                 label: b.label ?? '',
