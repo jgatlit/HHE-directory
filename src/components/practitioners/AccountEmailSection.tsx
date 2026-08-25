@@ -7,7 +7,7 @@ type Props = {
   /** True when the viewer is an admin editing a profile that is not their own. */
   editingSomeoneElse: boolean;
   action: (formData: FormData) => void | Promise<void>;
-  error?: 'bad-email' | 'email-taken' | null;
+  error?: 'bad-email' | 'email-taken' | 'email-send-failed' | null;
   /** Set once, right after the OLD flow's immediate write. Superseded by `pending` below —
    *  requesting a change no longer completes on this page at all. Kept for the (unlikely)
    *  case of a stale bookmarked `?saved=email` URL from before this change shipped. */
@@ -81,7 +81,9 @@ export function AccountEmailSection({
           <span>
             {error === 'email-taken'
               ? 'That address already belongs to another account, so nothing was changed.'
-              : 'That is not a usable email address, so nothing was changed.'}
+              : error === 'email-send-failed'
+                ? "We couldn't send the confirmation email — nothing was changed. Try again in a moment."
+                : 'That is not a usable email address, so nothing was changed.'}
           </span>
         </p>
       )}

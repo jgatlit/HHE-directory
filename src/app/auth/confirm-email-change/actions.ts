@@ -1,6 +1,7 @@
 'use server';
 
 import { redirect } from 'next/navigation';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { signOut } from '@/auth';
 
@@ -21,9 +22,10 @@ export async function confirmEmailChange(token: string): Promise<void> {
   }
 
   // Re-checked here, not just at request time: the interim (up to 24h) leaves room for the
-  // address to have been claimed by someone else since the request was made.
+  // address to have been claimed by someone else since the request was made. Case-insensitive
+  // for the same reason the request side is — see requestAccountEmailChange.
   const collision = await prisma.user.findFirst({
-    where: { email: request.newEmail, id: { not: request.userId } },
+    where: { email: { equals: request.newEmail, mode: 'insensitive' }, id: { not: request.userId } },
     select: { id: true },
   });
   if (collision) {
@@ -31,16 +33,42 @@ export async function confirmEmailChange(token: string): Promise<void> {
     redirect(`/auth/confirm-email-change/${token}?error=taken`);
   }
 
-  await prisma.$transaction([
-    prisma.user.update({ where: { id: request.userId }, data: { email: request.newEmail } }),
-    // Every pending request for this user, not just this token — a re-request before this one
-    // was confirmed would otherwise leave an orphaned row pointing at the address just replaced.
-    prisma.emailChangeRequest.deleteMany({ where: { userId: request.userId } }),
-  ]);
+  try {
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: request.userId },
+        data: {
+          email: request.newEmail,
+          // The ONLY real cross-device revocation lever (JWT strategy writes no `Session`
+          // rows — see User.sessionVersion's own doc comment and scripts/revoke-sessions.ts).
+          // Without this, confirming from a phone would leave a laptop's already-issued JWT
+          // carrying the OLD email in its `email` claim indefinitely, since sessions no longer
+          // expire. Bumping this invalidates every outstanding token for this user at once,
+          // this browser included — the signOut() below is then just a same-device convenience
+          // so the confirming browser doesn't have to fail a request first to find out.
+          sessionVersion: { increment: 1 },
+        },
+      }),
+      // Every pending request for this user, not just this token — a re-request before this one
+      // was confirmed would otherwise leave an orphaned row pointing at the address just replaced.
+      // (In practice there is at most one: EmailChangeRequest.userId is itself unique.)
+      prisma.emailChangeRequest.deleteMany({ where: { userId: request.userId } }),
+    ]);
+  } catch (e) {
+    // The pre-check above closes the common case, but does not eliminate the race: two
+    // DIFFERENT users' requests targeting the same address can both pass their own collision
+    // check before either transaction commits. The second to commit hits User.email's unique
+    // constraint — redirect to the SAME friendly "taken" state the pre-check already has,
+    // rather than an unhandled exception.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      redirect(`/auth/confirm-email-change/${token}?error=taken`);
+    }
+    throw e;
+  }
 
   // The session JWT carries the OLD email in its `email` claim (only `sub`, the user id, is what
-  // authorization actually reads) — signing out here is the "force a token refresh" the request
-  // action's own comment calls for, rather than leaving a stale address in the token indefinitely.
+  // authorization actually reads) — signing out here gives the CONFIRMING browser an immediate,
+  // clean redirect instead of waiting for its next request to fail sessionVersion's check above.
   // `emailChanged=1` is a flag, not the address — an email address has no business in a URL.
   await signOut({ redirectTo: '/auth/signin?emailChanged=1' });
 }

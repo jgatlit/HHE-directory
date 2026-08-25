@@ -1,14 +1,14 @@
 'use server';
 
-import { randomBytes } from 'node:crypto';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import * as Sentry from '@sentry/nextjs';
 import type { Prisma } from '@prisma/client';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
-import { sendEmail } from '@/lib/email';
+import { sendEmail, normalizeEmail, escapeHtml } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
+import { newToken } from '@/lib/tokens';
 import { indexPractitioner } from '@/lib/practitioner-indexer';
 import { syncSpecialtySynonyms } from '@/lib/typesense-synonyms';
 import { draftProfile, type DraftSpecialty } from '@/lib/onboarding-draft';
@@ -1289,8 +1289,8 @@ const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60 * 1000;
 export async function requestAccountEmailChange(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
 
-  const raw = String(formData.get('email') ?? '').trim().toLowerCase();
-  if (!raw || raw.length > 320 || !/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(raw)) {
+  const raw = normalizeEmail(String(formData.get('email') ?? ''));
+  if (!raw) {
     redirect(`/practitioners/${slug}/edit?error=bad-email#account`);
   }
 
@@ -1301,62 +1301,92 @@ export async function requestAccountEmailChange(slug: string, formData: FormData
   if (!practitioner) redirect('/auth/error?error=AccessDenied');
 
   if (practitioner.user.email.toLowerCase() === raw) {
-    redirect(`/practitioners/${slug}/edit?saved=email#account`);
+    // A genuine no-op — nothing was requested, so no "check your inbox" or "updated" banner is
+    // accurate here. `email` (unchanged) reads correctly with no query param at all.
+    redirect(`/practitioners/${slug}/edit#account`);
   }
 
   // Refuse on collision rather than merging accounts. Merging would hand this profile to
-  // whoever controls the other address. Re-checked again at confirm time, since the interim
-  // (up to 24h) leaves room for the address to be claimed by someone else in between.
-  const collision = await prisma.user.findUnique({ where: { email: raw }, select: { id: true } });
+  // whoever controls the other address. `mode: 'insensitive'` rather than trusting every row to
+  // already be lowercase — normalizeEmail lowercases on WRITE, but a row written before that
+  // convention existed (or by a path that doesn't call it) would otherwise slip past an exact
+  // match and let two accounts share what every real mail system treats as one mailbox.
+  // Re-checked again at confirm time, since the interim (up to 24h) leaves room for the address
+  // to be claimed by someone else in between.
+  const collision = await prisma.user.findFirst({
+    where: { email: { equals: raw, mode: 'insensitive' } },
+    select: { id: true },
+  });
   if (collision) {
     redirect(`/practitioners/${slug}/edit?error=email-taken#account`);
   }
 
-  const token = randomBytes(24).toString('base64url');
+  const token = newToken();
   const oldEmail = practitioner.user.email;
 
-  await prisma.$transaction([
-    prisma.emailChangeRequest.deleteMany({ where: { userId: practitioner.userId } }),
-    prisma.emailChangeRequest.create({
-      data: {
-        token,
-        userId: practitioner.userId,
-        newEmail: raw,
-        expiresAt: new Date(Date.now() + EMAIL_CHANGE_TTL_MS),
-      },
-    }),
-  ]);
-
-  const confirmUrl = `${SITE_URL}/auth/confirm-email-change/${token}`;
-  await sendEmail({
-    to: raw,
-    subject: 'Confirm your new email — Natural Health Pros',
-    text: `Confirm this is your email to finish changing your Natural Health Pros sign-in address: ${confirmUrl}\n\nThis link expires in 24 hours. If you didn't request this, you can ignore it — your sign-in address will not change.`,
-    html: `<p>Confirm this is your email to finish changing your Natural Health Pros sign-in address.</p>
-<p><a href="${confirmUrl}">Confirm email change</a></p>
-<p>This link expires in 24 hours. If you didn&rsquo;t request this, you can ignore it — your sign-in address will not change.</p>`,
-    // Keyed on the token so a form double-submit or a retry cannot double-send.
-    idempotencyKey: `email-change-confirm/${token}`,
-    tags: [{ name: 'type', value: 'email-change-confirm' }],
+  // upsert on the userId unique constraint, not delete-then-create: two concurrent requests
+  // (a double-submit, a retried POST) could otherwise both see zero rows before either insert
+  // commits, leaving two live tokens for one account pointing at two different addresses.
+  await prisma.emailChangeRequest.upsert({
+    where: { userId: practitioner.userId },
+    create: {
+      token,
+      userId: practitioner.userId,
+      newEmail: raw,
+      expiresAt: new Date(Date.now() + EMAIL_CHANGE_TTL_MS),
+    },
+    update: {
+      token,
+      newEmail: raw,
+      expiresAt: new Date(Date.now() + EMAIL_CHANGE_TTL_MS),
+    },
   });
 
-  // Best-effort heads-up to the OLD address, so a hijack attempt (someone else with access to
-  // this account requesting a change to an address the real owner doesn't control) is visible.
-  // Never blocks the request: the confirmation link above is what actually gates the change, and
-  // this old-address notice failing to send must not prevent a legitimate owner from proceeding.
-  try {
-    await sendEmail({
+  const confirmUrl = `${SITE_URL}/auth/confirm-email-change/${token}`;
+  const safeRaw = escapeHtml(raw);
+
+  // The two sends are independent of each other (the old-address notice doesn't depend on the
+  // new-address confirmation's outcome), so they run concurrently rather than back-to-back.
+  const [confirmResult, noticeResult] = await Promise.allSettled([
+    sendEmail({
+      to: raw,
+      subject: 'Confirm your new email — Natural Health Pros',
+      text: `Confirm this is your email to finish changing your Natural Health Pros sign-in address: ${confirmUrl}\n\nThis link expires in 24 hours. If you didn't request this, you can ignore it — your sign-in address will not change.`,
+      html: `<p>Confirm this is your email to finish changing your Natural Health Pros sign-in address.</p>
+<p><a href="${confirmUrl}">Confirm email change</a></p>
+<p>This link expires in 24 hours. If you didn&rsquo;t request this, you can ignore it — your sign-in address will not change.</p>`,
+      // Keyed on the token so a form double-submit or a retry cannot double-send.
+      idempotencyKey: `email-change-confirm/${token}`,
+      tags: [{ name: 'type', value: 'email-change-confirm' }],
+    }),
+    // Best-effort heads-up to the OLD address, so a hijack attempt (someone else with access to
+    // this account requesting a change to an address the real owner doesn't control) is visible.
+    // Its own failure must never block the request — the confirmation link above is what
+    // actually gates the change.
+    sendEmail({
       to: oldEmail,
       subject: 'Email change requested on your Natural Health Pros account',
       text: `A change to ${raw} was requested on your Natural Health Pros account. It only takes effect if that address confirms it. If this wasn't you, no action is needed — nothing changes unless ${raw} confirms.`,
-      html: `<p>A change to <strong>${raw}</strong> was requested on your Natural Health Pros account. It only takes effect if that address confirms it.</p>
-<p>If this wasn&rsquo;t you, no action is needed — nothing changes unless ${raw} confirms.</p>`,
+      html: `<p>A change to <strong>${safeRaw}</strong> was requested on your Natural Health Pros account. It only takes effect if that address confirms it.</p>
+<p>If this wasn&rsquo;t you, no action is needed — nothing changes unless ${safeRaw} confirms.</p>`,
       idempotencyKey: `email-change-notice/${token}`,
       tags: [{ name: 'type', value: 'email-change-notice' }],
-    });
-  } catch (e) {
-    Sentry.captureException(e);
+    }),
+  ]);
+
+  if (noticeResult.status === 'rejected') {
+    Sentry.captureException(noticeResult.reason);
   }
 
+  if (confirmResult.status === 'rejected') {
+    // The PRIMARY send failed — the pending row must not outlive the email that was supposed to
+    // deliver its token, or the practitioner is left with a request they have no way to complete
+    // and no visible error explaining why nothing arrived.
+    await prisma.emailChangeRequest.deleteMany({ where: { userId: practitioner.userId, token } });
+    Sentry.captureException(confirmResult.reason);
+    redirect(`/practitioners/${slug}/edit?error=email-send-failed#account`);
+  }
+
+  revalidatePath(`/practitioners/${slug}/edit`);
   redirect(`/practitioners/${slug}/edit?saved=email-pending#account`);
 }

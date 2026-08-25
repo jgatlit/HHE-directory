@@ -2,6 +2,7 @@ import { Mail, ShieldCheck } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { AuthErrorCard } from '@/components/auth/AuthErrorCard';
 import { confirmEmailChange } from '@/app/auth/confirm-email-change/actions';
 
 type Props = { params: { token: string }; searchParams: { error?: string } };
@@ -14,7 +15,7 @@ export default async function ConfirmEmailChangePage({ params, searchParams }: P
 
   if (searchParams.error === 'taken') {
     return (
-      <ErrorCard
+      <AuthErrorCard
         title="That address is no longer available"
         message="Someone else registered this email address before the change was confirmed. Nothing on your account changed — request the change again with a different address."
       />
@@ -23,7 +24,7 @@ export default async function ConfirmEmailChangePage({ params, searchParams }: P
 
   if (expired) {
     return (
-      <ErrorCard
+      <AuthErrorCard
         title="Link expired"
         message="This confirmation link is no longer valid. Go back to your profile's edit page and request the email change again."
       />
@@ -58,19 +59,6 @@ export default async function ConfirmEmailChangePage({ params, searchParams }: P
               You&apos;ll be signed out and asked to sign in again with your new address.
             </p>
           </form>
-        </Card>
-      </div>
-    </main>
-  );
-}
-
-function ErrorCard({ title, message }: { title: string; message: string }) {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-12">
-      <div className="w-full max-w-sm">
-        <Card className="space-y-3 p-6 sm:p-8 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-          <p className="text-sm text-muted-foreground">{message}</p>
         </Card>
       </div>
     </main>

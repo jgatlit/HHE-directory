@@ -297,7 +297,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           </Card>
         )}
 
-        {searchParams.saved && (
+        {searchParams.saved && searchParams.saved !== 'email-pending' && (
           <Card className="border-green-500/30 bg-green-500/5 p-3">
             <p className="flex items-center gap-1.5 text-xs">
               <Check className="h-3.5 w-3.5 text-green-600" />
@@ -713,7 +713,9 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           editingSomeoneElse={!isOwner}
           action={requestAccountEmailChangeAction}
           error={
-            searchParams.error === 'email-taken' || searchParams.error === 'bad-email'
+            searchParams.error === 'email-taken' ||
+            searchParams.error === 'bad-email' ||
+            searchParams.error === 'email-send-failed'
               ? searchParams.error
               : null
           }

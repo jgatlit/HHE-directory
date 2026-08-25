@@ -652,12 +652,13 @@ model Invitation {
 /// email a sign-in link was sent to" — repurposing it for "the NEW email of an in-progress
 /// change" risks colliding with a concurrent sign-in token for that same address.
 ///
-/// One pending request per user: `requestAccountEmailChange` deletes any prior row for the same
-/// userId before creating a new one, so re-requesting is idempotent rather than accumulating.
+/// One pending request per user — enforced by `@@unique([userId])` below, not merely by app-level
+/// delete-then-insert. `requestAccountEmailChange` upserts on that constraint, so a double-submit
+/// or a retried POST cannot leave two live rows racing each other for the same account.
 model EmailChangeRequest {
   id        String   @id @default(cuid())
   token     String   @unique
-  userId    String
+  userId    String   @unique
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   newEmail  String
   expiresAt DateTime

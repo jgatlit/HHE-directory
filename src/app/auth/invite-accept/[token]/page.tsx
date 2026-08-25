@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { signIn } from '@/auth';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { AuthErrorCard } from '@/components/auth/AuthErrorCard';
 
 type Props = { params: { token: string } };
 
@@ -28,7 +29,7 @@ export default async function InviteAcceptPage({ params }: Props) {
 
   if (!invitation || expired) {
     return (
-      <ErrorCard
+      <AuthErrorCard
         title="Invitation expired"
         message="This invitation link is no longer valid. Ask your HHE program lead to send a new one."
       />
@@ -37,7 +38,7 @@ export default async function InviteAcceptPage({ params }: Props) {
 
   if (alreadyAccepted) {
     return (
-      <ErrorCard
+      <AuthErrorCard
         title="Already accepted"
         message="This invitation has already been claimed. If that's you, sign in from the home page."
       />
@@ -83,19 +84,6 @@ export default async function InviteAcceptPage({ params }: Props) {
               profile.
             </p>
           </form>
-        </Card>
-      </div>
-    </main>
-  );
-}
-
-function ErrorCard({ title, message }: { title: string; message: string }) {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-12">
-      <div className="w-full max-w-sm">
-        <Card className="space-y-3 p-6 sm:p-8 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-          <p className="text-sm text-muted-foreground">{message}</p>
         </Card>
       </div>
     </main>

@@ -1,10 +1,11 @@
 'use server';
 
-import { randomBytes } from 'node:crypto';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { auth, signIn } from '@/auth';
 import { prisma } from '@/lib/prisma';
+import { newToken } from '@/lib/tokens';
+import { normalizeEmail } from '@/lib/email';
 import {
   indexPractitioner,
   indexPractitionerVerified,
@@ -14,10 +15,6 @@ import {
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const TRIAL_DAYS = 90;
 const TRIAL_MS = TRIAL_DAYS * 24 * 60 * 60 * 1000;
-
-function newToken(): string {
-  return randomBytes(24).toString('base64url');
-}
 
 async function requireAdmin() {
   const session = await auth();
@@ -456,24 +453,6 @@ export async function setDelisted(formData: FormData): Promise<void> {
 /** Soft DELETE. Drops out of discovery AND booking; booking intents and payments are preserved. */
 export async function setArchived(formData: FormData): Promise<void> {
   await applyDirectoryFlag(formData, 'archivedAt');
-}
-
-/**
- * Normalize + validate an email the way the auth stack compares them.
- *
- * `adminEmails()` in src/auth.ts lowercases before matching, the onboarding gate compares
- * `session.user.email?.toLowerCase()` against `invitation.email.toLowerCase()`, and
- * `User.email` is `@unique`. Storing a mixed-case address therefore works everywhere EXCEPT
- * the uniqueness index, which is case-sensitive — so `Jane@x.com` and `jane@x.com` would be two
- * users, two practitioners, and one very confused person. Lowercase on write.
- */
-function normalizeEmail(raw: string): string | null {
-  const email = raw.trim().toLowerCase();
-  if (!email || email.length > 320) return null;
-  // Deliberately permissive: the authoritative test of an address is whether the magic link
-  // arrives, not a regex. This rejects only what cannot possibly be an address.
-  if (!/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(email)) return null;
-  return email;
 }
 
 /**
