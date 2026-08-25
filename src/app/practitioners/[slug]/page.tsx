@@ -287,9 +287,14 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                   permanent note next to whatever else this section of the page is showing. */}
               <section
                 aria-label="Reviews"
-                className="rounded-xl bg-secondary/40 p-6 text-center text-xs text-muted-foreground"
+                className="space-y-2 rounded-xl bg-secondary/40 p-6 text-center"
               >
-                Client reviews are coming to Natural Health Pros soon.
+                <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Reviews
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Client reviews are coming to Natural Health Pros soon.
+                </p>
               </section>
             </div>
           </div>
