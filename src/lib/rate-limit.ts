@@ -8,15 +8,25 @@ import * as Sentry from '@sentry/nextjs';
 const hasKv = !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
 
 /**
- * Went months unnoticed once already (see this file's history — the "no log, no signal" comment
- * that used to sit on the early return below): a missing/renamed env var, a disconnected
- * marketplace resource, or a new environment silently unlimits two public unauthenticated routes
- * (booking capture, booking signal), and the only way to find out was to read the source.
+ * The early return above used to be silent — no log, no signal — which is exactly how a missing
+ * KV_REST_API_URL/KV_REST_API_TOKEN went unnoticed for months across two public unauthenticated
+ * routes (booking capture, booking signal). A missing/renamed env var, or a disconnected
+ * marketplace resource, reproduces the same silent hole in the future with nothing to catch it
+ * short of reading the source.
  *
  * Loud once per process, not per request — this fires on cold start / first call, not on every
  * hit to a public route. Deliberately does NOT fail closed: taking booking capture down entirely
  * because a KV var is missing would be strictly worse than an unenforced limit on a low-traffic
  * pilot. Loud and open is the trade.
+ *
+ * `console.error` is the signal that actually reaches anyone today. `Sentry.captureMessage` is
+ * called alongside it to match this codebase's existing error-reporting convention (see
+ * error.tsx, api/health/search), but — confirmed while writing this — Sentry.init() is not
+ * called anywhere in this app (no sentry.*.config.*, no instrumentation.ts, no SENTRY_DSN in
+ * .env), so every Sentry.capture* call in the codebase today, this one included, is inert. That
+ * gap predates this change and is bigger than this file; flagged to the operator separately
+ * rather than silently worked around here. Left in rather than removed so this starts reporting
+ * for real the moment Sentry is actually wired up, with no further change needed here.
  */
 let warnedUnconfigured = false;
 function warnIfUnconfigured() {
