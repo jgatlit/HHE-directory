@@ -24,7 +24,7 @@ import {
   startWhopOnboarding,
   openPayoutPortal,
   startSubscriptionCheckout,
-  updateAccountEmail,
+  requestAccountEmailChange,
 } from './actions';
 import { OfferingsEditor } from '@/components/practitioners/OfferingsEditor';
 import { SubscriptionSection } from '@/components/practitioners/SubscriptionSection';
@@ -71,9 +71,19 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
       caseStudies: { orderBy: { createdAt: 'desc' } },
       // The PROFILE OWNER's role — the subject of the billing exemption, and not the same
       // person as the viewer. Read from the DB, never from the session: isListed() gates on
-      // this exact value server-side, and session.user.role is a JWT cache refreshed only at
-      // sign-in (30-day token, issue #24), so the two can disagree for a month.
-      user: { select: { role: true, email: true } },
+      // this exact value server-side, and session.user.role is the VIEWER's own role, which
+      // differs from the owner's whenever an admin is editing someone else's profile.
+      user: {
+        select: {
+          role: true,
+          email: true,
+          emailChangeRequests: {
+            where: { expiresAt: { gt: new Date() } },
+            select: { newEmail: true },
+            take: 1,
+          },
+        },
+      },
     },
   });
   if (!practitioner) notFound();
@@ -206,7 +216,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const startWhopOnboardingAction = startWhopOnboarding.bind(null, params.slug);
   const openPayoutPortalAction = openPayoutPortal.bind(null, params.slug);
   const startSubscriptionCheckoutAction = startSubscriptionCheckout.bind(null, params.slug);
-  const updateAccountEmailAction = updateAccountEmail.bind(null, params.slug);
+  const requestAccountEmailChangeAction = requestAccountEmailChange.bind(null, params.slug);
 
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-14">
@@ -701,13 +711,15 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           // and differs whenever an admin is editing someone else's profile.
           email={practitioner.user.email}
           editingSomeoneElse={!isOwner}
-          action={updateAccountEmailAction}
+          action={requestAccountEmailChangeAction}
           error={
             searchParams.error === 'email-taken' || searchParams.error === 'bad-email'
               ? searchParams.error
               : null
           }
           saved={searchParams.saved === 'email'}
+          pending={searchParams.saved === 'email-pending'}
+          pendingEmail={practitioner.user.emailChangeRequests[0]?.newEmail ?? null}
         />
 
         <p className="text-center text-xs text-muted-foreground">
