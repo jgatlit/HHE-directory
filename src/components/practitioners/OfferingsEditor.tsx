@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -72,23 +72,45 @@ export function OfferingsEditor({
   reorderAction: Action;
 }) {
   const [order, setOrder] = useState(offerings);
-  const [isPending, startTransition] = useTransition();
+  const [pendingCount, setPendingCount] = useState(0);
+  const [saveFailed, setSaveFailed] = useState(false);
+  // Each reorder chains onto the previous one's settlement rather than firing independently.
+  // Two calls fired concurrently give Postgres no guarantee the transaction that STARTED second
+  // also COMMITS second — a slower first request completing after a faster second one would win,
+  // silently reverting the practitioner's actual last move. Chaining serializes them in the order
+  // they were issued instead.
+  const reorderChain = useRef<Promise<unknown>>(Promise.resolve());
 
   // Server state wins after any revalidate (delete/create/publish all trigger one) — otherwise a
   // change made elsewhere on the page leaves this list holding a stale row, or missing a new one.
-  useEffect(() => setOrder(offerings), [offerings]);
+  // Skipped while a reorder is in flight: that OTHER action's revalidate can land mid-drag with a
+  // pre-drag `offerings` snapshot (it read the DB before this reorder's transaction committed),
+  // which would otherwise snap the visible order back to before the drag with no error shown.
+  useEffect(() => {
+    if (pendingCount === 0) setOrder(offerings);
+  }, [offerings, pendingCount]);
 
   function handleReorder(next: Offering[]) {
     setOrder(next);
+    setSaveFailed(false);
     const formData = new FormData();
     formData.set('orderJson', JSON.stringify(next.map((o) => o.id)));
+    setPendingCount((c) => c + 1);
     // Fire-and-persist: there is no separate "save order" step for this list, matching how the
-    // old up/down control auto-saved on click. The local `order` state above is what the practitioner
-    // sees immediately; reorderAction's own revalidatePath is what makes it durable.
-    startTransition(() => {
-      void reorderAction(formData);
-    });
+    // old up/down control auto-saved on click. The local `order` state above is what the
+    // practitioner sees immediately; reorderAction's own revalidatePath is what makes it durable.
+    // A prior failure must not block this attempt from starting — only from being silent.
+    reorderChain.current = reorderChain.current
+      .catch(() => undefined)
+      .then(() => reorderAction(formData))
+      .catch((e) => {
+        console.error('[offerings-reorder-failed]', e);
+        setSaveFailed(true);
+      })
+      .finally(() => setPendingCount((c) => c - 1));
   }
+
+  const hasMultiple = order.length > 1;
 
   return (
     <Card id="offerings" className="scroll-mt-8 space-y-5 p-6 sm:p-8">
@@ -101,62 +123,75 @@ export function OfferingsEditor({
         </p>
       </div>
 
-      {order.length > 1 && (
+      {hasMultiple && (
         <p className="text-[11px] text-muted-foreground">
           Drag to reorder — this is the order shown on your profile, first to last.
-          {isPending && ' Saving…'}
+          {pendingCount > 0 && ' Saving…'}
+        </p>
+      )}
+
+      {saveFailed && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          That reorder didn&apos;t save. Try dragging again.
         </p>
       )}
 
       {order.length > 0 && (
-        <div className="space-y-3">
-          <SortableList items={order} onReorder={handleReorder}>
-            {(o, i, handle) => (
-              <div className="rounded-lg border p-3">
-                {order.length > 1 && (
-                  <div className="mb-2 flex items-center gap-1">
-                    {handle}
-                    <span className="text-[11px] font-medium text-muted-foreground">
-                      Offering {i + 1}
-                    </span>
-                  </div>
-                )}
-                <form action={updateAction} className="space-y-3">
-                  <input type="hidden" name="offeringId" value={o.id} />
-                  <OfferingFields
-                    offering={o}
-                    idPrefix={o.id}
-                    bookingLinks={bookingLinks}
-                    whopConnected={whopConnected}
-                    payoutsEnabled={payoutsEnabled}
-                  />
-                  <PublishRow
-                    offering={o}
-                    payoutsEnabled={payoutsEnabled}
-                    publishAction={publishAction}
-                    unpublishAction={unpublishAction}
-                  />
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      formAction={deleteAction}
-                      formNoValidate
-                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-destructive"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                      Remove
-                    </button>
-                    <button
-                      type="submit"
-                      className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-          </SortableList>
-        </div>
+        // SortableList renders its own wrapping element around the rows (for dnd-kit's
+        // DndContext/SortableContext), so a `space-y-*` class placed on ITS parent — as this used
+        // to be — has exactly one direct child to apply between and does nothing. Spacing lives on
+        // each row itself instead (mb-3 on all but the last), the same way BookingLinksField's rows
+        // carry their own `pb-2` rather than relying on a non-adjacent ancestor's `space-y`.
+        <SortableList
+          items={order}
+          onReorder={handleReorder}
+          getItemLabel={(o, i) => `Reorder ${o.title || 'offering ' + (i + 1)} — press space, then use the arrow keys`}
+        >
+          {(o, i, handle) => (
+            <div className={`rounded-lg border p-3 ${i < order.length - 1 ? 'mb-3' : ''}`}>
+              {hasMultiple && (
+                <div className="mb-2 flex items-center gap-1">
+                  {handle}
+                  <span className="text-[11px] font-medium text-muted-foreground">
+                    Offering {i + 1}
+                  </span>
+                </div>
+              )}
+              <form action={updateAction} className="space-y-3">
+                <input type="hidden" name="offeringId" value={o.id} />
+                <OfferingFields
+                  offering={o}
+                  idPrefix={o.id}
+                  bookingLinks={bookingLinks}
+                  whopConnected={whopConnected}
+                  payoutsEnabled={payoutsEnabled}
+                />
+                <PublishRow
+                  offering={o}
+                  payoutsEnabled={payoutsEnabled}
+                  publishAction={publishAction}
+                  unpublishAction={unpublishAction}
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    formAction={deleteAction}
+                    formNoValidate
+                    className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-destructive"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                    Remove
+                  </button>
+                  <button
+                    type="submit"
+                    className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                  >
+                    Save
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+        </SortableList>
       )}
 
       <Separator />

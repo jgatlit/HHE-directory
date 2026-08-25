@@ -1009,9 +1009,9 @@ export async function deleteOffering(slug: string, formData: FormData): Promise<
  */
 export async function reorderOfferings(slug: string, formData: FormData): Promise<void> {
   const target = await authorizeForSlug(slug);
-  // A malformed or empty payload must SURFACE. Returning quietly leaves useFormStatus flipping
-  // back to idle while the controls still show the reordered numbering they hold locally, so the
-  // practitioner believes the order saved and the public profile disagrees.
+  // A malformed or empty payload must SURFACE — redirecting with `?error=` is what makes
+  // OfferingsEditor's caller (a direct call, not a form submission) actually see the failure
+  // rather than believing a locally-reordered list saved when the public profile disagrees.
   let ids: string[] = [];
   try {
     const parsed = JSON.parse(String(formData.get('orderJson') ?? '[]'));
