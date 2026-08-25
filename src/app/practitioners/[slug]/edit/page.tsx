@@ -53,6 +53,14 @@ type Props = {
 
 export const dynamic = 'force-dynamic';
 
+// Named once, referenced everywhere it's needed: the profile form's id and BookingLinksField's
+// `formId` prop (which each of its inputs uses as `form={formId}` to submit with this form despite
+// rendering outside its DOM subtree — see BookingLinksField's own doc comment) must be the exact
+// same string, or those fields silently drop out of the submission with no error. Two independent
+// string literals kept in sync "by convention" is exactly how that drift happens; one constant
+// makes it impossible.
+const PROFILE_FORM_ID = 'profile-form';
+
 export default async function EditPractitionerPage({ params, searchParams }: Props) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -383,7 +391,7 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
         )}
 
         <Card className="p-6 sm:p-8">
-          <form action={action} className="space-y-5">
+          <form id={PROFILE_FORM_ID} action={action} className="space-y-5">
             {/* Optimistic-concurrency token. Compared server-side before any write, so a save from
                 a stale tab (or from an admin editing this profile in support) is refused instead of
                 silently discarding the other editor's rows.
@@ -531,36 +539,6 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             </div>
 
             <Field
-              label="Booking links"
-              hint="Your scheduling links (Cal.com, Calendly, SavvyCal, Acuity, etc.). Each appears as its own button on your profile. Add an optional label per link (e.g. 'Free 15-min intro'). Leave empty if you're not taking new bookings."
-            >
-              {/* The key is load-bearing. Saving soft-redirects to ?saved=1, which keeps this
-                  subtree MOUNTED (same trap documented in UnsavedChangesBar) — so the field's
-                  lazy useState initializer never re-runs and a row added in this page session
-                  would keep dbId='' forever, being deleted and recreated on every later save.
-                  Keying on the persisted ids remounts it exactly when that set changes, and
-                  deliberately NOT when it hasn't: the invalid-URL redirect fires before the
-                  transaction, so a rejected save leaves the key identical and the practitioner's
-                  typed input survives.
-
-                  Accepted trade-off: when a save DOES change the id set, the remount reseeds from
-                  the server, so a second row left half-filled (a label typed, URL still blank —
-                  the server skips it) disappears. That is a visible row vanishing after an
-                  explicit save, against a silent id churn that would sever every offering's
-                  scheduler link; and showing exactly what was persisted is defensible on its own
-                  terms. Do not "fix" it by dropping the key. */}
-              <BookingLinksField
-                key={practitioner.bookingLinks.map((b) => b.id).join(',')}
-                initial={practitioner.bookingLinks.map((b) => ({
-                  id: b.id,
-                  label: b.label ?? '',
-                  url: b.url,
-                  ctaLabel: b.ctaLabel ?? '',
-                }))}
-              />
-            </Field>
-
-            <Field
               label="Specialties"
               hint="Search the curated list, or type your own term — we'll keep your wording on your profile and match it to the right category. Nothing is blocked while we review new terms."
             >
@@ -652,38 +630,84 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           priceLabel="$49/mo"
         />
 
-        <OfferingsEditor
-          offerings={practitioner.whopProducts.map((o) => ({
-            id: o.id,
-            title: o.title,
-            description: o.description,
-            priceUsdCents: o.priceUsdCents,
-            interval: o.interval,
-            category: o.category,
-            duration: o.duration,
-            isConsult: o.isConsult,
-            acceptsPayments: o.acceptsPayments,
-            bookingLinkId: o.bookingLinkId,
-            listingVisibility: o.listingVisibility,
-            whopPlanId: o.whopPlanId,
-            purchaseUrl: o.purchaseUrl,
-          }))}
-          payoutsEnabled={practitioner.whopPayoutsEnabled}
-          whopConnected={practitioner.whopCompanyId != null}
-          // §12 — the "Schedule with" dropdown lists THIS practitioner's links only. D6 makes
-          // that automatic: a BookingLink is always practitioner-scoped, so a shared scheduler
-          // URL is a second row rather than a shared entity needing scoping logic here.
-          bookingLinks={practitioner.bookingLinks.map((l) => ({
-            id: l.id,
-            label: l.label?.trim() || l.url,
-          }))}
-          createAction={createOfferingAction}
-          updateAction={updateOfferingAction}
-          deleteAction={deleteOfferingAction}
-          publishAction={publishOfferingAction}
-          unpublishAction={unpublishOfferingAction}
-          reorderAction={reorderOfferingsAction}
-        />
+        {/* Booking links + Offerings side-by-side on wide screens, stacked on narrow ones —
+            cosmetic pairing of "how a client reaches you" with "what they can book" (queue item
+            7, 2026-08-25). Booking links physically renders here, NOT inside the profile form
+            above, even though its inputs still submit with that form: `form="profile-form"` on
+            each of BookingLinksField's inputs (see that component) is what makes an element
+            outside a `<form>`'s DOM subtree still part of its submission. Offerings can't move
+            the other direction (up next to the profile form) — each offering is its own <form>,
+            and BookingsSection above is deliberately ahead of both for time-sensitivity, a
+            separate ordering rule this doesn't touch. */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+          <Card className="space-y-3 p-6 sm:p-8">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">Booking links</h2>
+              <p className="text-xs text-muted-foreground">
+                Your scheduling links (Cal.com, Calendly, SavvyCal, Acuity, etc.). Each appears as
+                its own button on your profile. Add an optional label per link (e.g. &lsquo;Free
+                15-min intro&rsquo;). Leave empty if you&apos;re not taking new bookings.
+              </p>
+            </div>
+            {/* The key is load-bearing. Saving soft-redirects to ?saved=1, which keeps this
+                subtree MOUNTED (same trap documented in UnsavedChangesBar) — so the field's lazy
+                useState initializer never re-runs and a row added in this page session would keep
+                dbId='' forever, being deleted and recreated on every later save. Keying on the
+                persisted ids remounts it exactly when that set changes, and deliberately NOT when
+                it hasn't: the invalid-URL redirect fires before the transaction, so a rejected
+                save leaves the key identical and the practitioner's typed input survives.
+
+                Accepted trade-off: when a save DOES change the id set, the remount reseeds from
+                the server, so a second row left half-filled (a label typed, URL still blank — the
+                server skips it) disappears. That is a visible row vanishing after an explicit
+                save, against a silent id churn that would sever every offering's scheduler link;
+                and showing exactly what was persisted is defensible on its own terms. Do not "fix"
+                it by dropping the key. */}
+            <BookingLinksField
+              key={practitioner.bookingLinks.map((b) => b.id).join(',')}
+              formId={PROFILE_FORM_ID}
+              initial={practitioner.bookingLinks.map((b) => ({
+                id: b.id,
+                label: b.label ?? '',
+                url: b.url,
+                ctaLabel: b.ctaLabel ?? '',
+              }))}
+            />
+          </Card>
+
+          <OfferingsEditor
+            offerings={practitioner.whopProducts.map((o) => ({
+              id: o.id,
+              title: o.title,
+              description: o.description,
+              priceUsdCents: o.priceUsdCents,
+              interval: o.interval,
+              category: o.category,
+              duration: o.duration,
+              isConsult: o.isConsult,
+              acceptsPayments: o.acceptsPayments,
+              bookingLinkId: o.bookingLinkId,
+              listingVisibility: o.listingVisibility,
+              whopPlanId: o.whopPlanId,
+              purchaseUrl: o.purchaseUrl,
+            }))}
+            payoutsEnabled={practitioner.whopPayoutsEnabled}
+            whopConnected={practitioner.whopCompanyId != null}
+            // §12 — the "Schedule with" dropdown lists THIS practitioner's links only. D6 makes
+            // that automatic: a BookingLink is always practitioner-scoped, so a shared scheduler
+            // URL is a second row rather than a shared entity needing scoping logic here.
+            bookingLinks={practitioner.bookingLinks.map((l) => ({
+              id: l.id,
+              label: l.label?.trim() || l.url,
+            }))}
+            createAction={createOfferingAction}
+            updateAction={updateOfferingAction}
+            deleteAction={deleteOfferingAction}
+            publishAction={publishOfferingAction}
+            unpublishAction={unpublishOfferingAction}
+            reorderAction={reorderOfferingsAction}
+          />
+        </div>
 
         <PaymentsSection
           slug={params.slug}

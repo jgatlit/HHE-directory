@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, X, ExternalLink } from 'lucide-react';
 import { SortableList } from '@/components/practitioners/SortableList';
 import { duplicateBookingRowKeys } from '@/lib/booking-links';
@@ -15,7 +15,16 @@ export type BookingLinkInput = { id: string; label: string; url: string; ctaLabe
  */
 type Row = { id: string; dbId: string; label: string; url: string; ctaLabel: string };
 
-type Props = { initial: BookingLinkInput[] };
+type Props = {
+  initial: BookingLinkInput[];
+  /** Id of the `<form>` this field's inputs submit with. Required when this component renders
+   *  outside that form's own DOM subtree (see edit/page.tsx — booking links are laid out next to
+   *  Offerings, physically apart from the "Save profile" form they still need to submit with).
+   *  The HTML `form` attribute is what makes that work: every submitted input below needs it, or
+   *  that one field silently drops out of the submission with no error — the same "missing form="
+   *  shape this codebase is already careful about elsewhere. */
+  formId: string;
+};
 
 /**
  * Repeatable booking-link field (Wedge 2B). Each row emits a `bookingId` + `bookingLabel` +
@@ -35,7 +44,7 @@ type Props = { initial: BookingLinkInput[] };
  * edited row from a new one, and its only option is to delete every link and recreate them —
  * which mints new ids on every save and breaks anything pointing at BookingLink.id.
  */
-export function BookingLinksField({ initial }: Props) {
+export function BookingLinksField({ initial, formId }: Props) {
   const nextKey = useRef(0);
   const mint = () => `bl-${nextKey.current++}`;
   const [rows, setRows] = useState<Row[]>(() =>
@@ -57,6 +66,33 @@ export function BookingLinksField({ initial }: Props) {
    */
   const announce = () =>
     root.current?.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+
+  /**
+   * Relay every input/change bubbling inside this field — typing, the "Main" radio, and the
+   * `announce()` above (itself covering add/remove and SortableList's own reorder-announce,
+   * since SortableList is nested inside this root) — on to the ACTUAL form.
+   *
+   * `form={formId}` on the inputs above only restores SUBMISSION: the HTML `form` attribute
+   * governs which FormData a control's value joins, not where its DOM events bubble. This field
+   * now renders as a sibling of `<form id={formId}>` (see edit/page.tsx — booking links sit next
+   * to Offerings, physically outside the profile form), so every one of those events bubbles
+   * through this component's own ancestry and dead-ends before ever reaching the form —
+   * UnsavedChangesBar listens on the form element itself and never sees any of them. Re-dispatch
+   * directly on the form, which is what its existing, unmodified listener already expects.
+   */
+  useEffect(() => {
+    const node = root.current;
+    if (!node) return;
+    const relay = () => {
+      document.getElementById(formId)?.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    node.addEventListener('input', relay);
+    node.addEventListener('change', relay);
+    return () => {
+      node.removeEventListener('input', relay);
+      node.removeEventListener('change', relay);
+    };
+  }, [formId]);
 
   const update = (id: string, patch: Partial<Omit<Row, 'id' | 'dbId'>>) =>
     setRows((r) => r.map((row) => (row.id === id ? { ...row, ...patch } : row)));
@@ -81,7 +117,7 @@ export function BookingLinksField({ initial }: Props) {
             {handle}
             {/* Posted alongside the visible fields so the three getAll() arrays line up by index.
                 Always rendered, even when empty, or a new row would shift every later row's id. */}
-            <input type="hidden" name="bookingId" value={row.dbId} />
+            <input type="hidden" name="bookingId" value={row.dbId} form={formId} />
             {/* §14.3 — which link owns the hero slot. Keyed on ROW INDEX, not id, so a link the
                 practitioner just added can be made primary before it has one; the server maps
                 the index back to the real id after reconciling. Without a writer the hero
@@ -94,6 +130,7 @@ export function BookingLinksField({ initial }: Props) {
                 value={i}
                 defaultChecked={i === 0}
                 aria-label={`Make booking link ${i + 1} the main button`}
+                form={formId}
               />
               Main
             </label>
@@ -105,6 +142,7 @@ export function BookingLinksField({ initial }: Props) {
                 onChange={(e) => update(row.id, { label: e.target.value })}
                 placeholder="Label (e.g. Free intro)"
                 className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
+                form={formId}
               />
               <input
                 // `type="text"`, not `type="url"`: §6 accepts pasted <iframe> markup and extracts
@@ -119,6 +157,7 @@ export function BookingLinksField({ initial }: Props) {
                 }}
                 placeholder="https://cal.com/your-username/intro-consult"
                 className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none ring-ring/30 focus-visible:ring-2"
+                form={formId}
               />
               <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
                 {/* Provider is DERIVED, never asked for (§6). Showing it back is how the
@@ -137,6 +176,7 @@ export function BookingLinksField({ initial }: Props) {
                   placeholder="Button text (optional)"
                   aria-label="Button text"
                   className="h-8 min-w-0 flex-1 rounded-md border bg-card px-2 text-xs outline-none ring-ring/30 focus-visible:ring-2"
+                  form={formId}
                 />
                 {/* §15 mechanism 2. We deliberately build NO server-side link crawler: a 200
                     does not mean the event type still exists or is bookable, and the
