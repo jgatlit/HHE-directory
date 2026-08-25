@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SearchX } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -7,6 +8,18 @@ import { Card } from '@/components/ui/card';
 // not-found segment to render into, so Next served this same "not found"
 // copy with an HTTP 200 status instead of 404 — see GH issue history for the
 // full trust/SEO impact (crawlers indexing dead listings as live pages).
+//
+// Metadata is declared explicitly: without it this segment inherits the root
+// layout's homepage title, so a dead/removed page's browser tab would read
+// identically to the live homepage. book/ and book/[token]/ have no
+// route-specific generateMetadata of their own, so this is the only title
+// they get when they 404 (practitioners/[slug]/page.tsx already sets its own
+// "Practitioner not found" title via generateMetadata, independent of this).
+export const metadata: Metadata = {
+  title: 'Page not found · Natural Health Pros',
+  robots: { index: false, follow: false },
+};
+
 export default function NotFound() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-16">
