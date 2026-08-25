@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import {
   createInvitation,
+  createInvitationsBulk,
   revokeInvitation,
   resendInvitation,
   resetTrial,
@@ -35,6 +36,10 @@ export default async function AdminInvitesPage({
   const showArchived = searchParams?.archived === '1';
   const errorCode = typeof searchParams?.error === 'string' ? searchParams.error : null;
   const notice = typeof searchParams?.notice === 'string' ? searchParams.notice : null;
+  const bulkCreated = typeof searchParams?.bulk_created === 'string' ? searchParams.bulk_created : null;
+  const bulkReused = typeof searchParams?.bulk_reused === 'string' ? Number(searchParams.bulk_reused) : 0;
+  const bulkInvalid = typeof searchParams?.bulk_invalid === 'string' ? Number(searchParams.bulk_invalid) : 0;
+  const bulkFailed = typeof searchParams?.bulk_failed === 'string' ? Number(searchParams.bulk_failed) : 0;
 
   const allInvitations = await prisma.invitation.findMany({
     orderBy: { createdAt: 'desc' },
@@ -178,6 +183,20 @@ export default async function AdminInvitesPage({
             </p>
           </div>
         )}
+        {bulkCreated !== null && (
+          <div className="flex items-start gap-2 rounded-md border px-4 py-3 text-sm">
+            <Send className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            <p>
+              <span className="font-medium">Bulk invite: {bulkCreated} sent</span>
+              {bulkReused > 0 && `, ${bulkReused} already pending (link reused)`}
+              {bulkInvalid > 0 && `, ${bulkInvalid} skipped (not a usable email)`}
+              {bulkFailed > 0 && (
+                <span className="text-destructive">, {bulkFailed} failed to send</span>
+              )}
+              .
+            </p>
+          </div>
+        )}
         {errorCode === 'no-profile' && (
           <div className="flex items-start gap-2 rounded-md border px-4 py-3 text-sm">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -205,6 +224,30 @@ export default async function AdminInvitesPage({
           </form>
           <p className="text-xs text-muted-foreground">
             Resending to an email with a pending invitation reuses the existing link.
+          </p>
+        </Card>
+
+        <Card className="space-y-3 p-5">
+          <h2 className="text-sm font-semibold">Bulk invite</h2>
+          <form action={createInvitationsBulk} className="flex flex-col gap-2">
+            <textarea
+              name="emails"
+              required
+              rows={4}
+              placeholder={'One email per line, or paste a comma-separated list —\npractitioner1@example.com\npractitioner2@example.com'}
+              className="w-full resize-y rounded-md border bg-card px-3 py-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
+            />
+            <button
+              type="submit"
+              className="inline-flex h-10 w-fit items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              <Send className="h-4 w-4" />
+              Send all invites
+            </button>
+          </form>
+          <p className="text-xs text-muted-foreground">
+            Same behavior as a single invite, run once per address — duplicates in the list and
+            addresses already pending are skipped or reused, never double-sent.
           </p>
         </Card>
 

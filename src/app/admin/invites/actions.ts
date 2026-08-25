@@ -61,12 +61,16 @@ async function sendInviteMagicLink(email: string, invitationToken: string): Prom
   }
 }
 
-export async function createInvitation(formData: FormData): Promise<void> {
-  const session = await requireAdmin();
-  const email = String(formData.get('email') ?? '').trim().toLowerCase();
-  if (!email || !email.includes('@')) {
-    redirect('/admin/invites?error=invalid-email');
-  }
+export type InviteOutcome = 'created' | 'reused' | 'invalid' | 'send-failed';
+
+/**
+ * Core of a single invite: idempotency check, create, send, rollback-on-fail. Shared by
+ * `createInvitation` (one email, redirects on the outcome) and `createInvitationsBulk` (many
+ * emails, aggregates the outcomes instead of redirecting per-row).
+ */
+async function inviteOne(rawEmail: string, invitedById: string): Promise<InviteOutcome> {
+  const email = rawEmail.trim().toLowerCase();
+  if (!email || !email.includes('@')) return 'invalid';
 
   // Idempotency: reuse pending unexpired invitation for this email if present.
   const existing = await prisma.invitation.findFirst({
@@ -93,7 +97,7 @@ export async function createInvitation(formData: FormData): Promise<void> {
       data: {
         token,
         email,
-        invitedById: session.user.id,
+        invitedById,
         expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
       },
     });
@@ -110,10 +114,65 @@ export async function createInvitation(formData: FormData): Promise<void> {
         .delete({ where: { id: createdId } })
         .catch((e) => console.error('[invite-rollback-failed] create', { email, createdId }, e));
     }
-    redirect('/admin/invites?error=send-failed');
+    return 'send-failed';
+  }
+
+  return existing ? 'reused' : 'created';
+}
+
+export async function createInvitation(formData: FormData): Promise<void> {
+  const session = await requireAdmin();
+  const email = String(formData.get('email') ?? '');
+  const outcome = await inviteOne(email, session.user.id);
+
+  if (outcome === 'invalid') redirect('/admin/invites?error=invalid-email');
+  if (outcome === 'send-failed') redirect('/admin/invites?error=send-failed');
+
+  revalidatePath('/admin/invites');
+}
+
+/**
+ * MANY EMAILS, ONE SUBMIT. Reuses `inviteOne` per address rather than reimplementing the
+ * idempotency/rollback logic — a batch is just createInvitation run N times with the outcomes
+ * collected instead of redirected on.
+ *
+ * Sequential, not Promise.all: each row hits Resend + Postgres, and running 17 of those
+ * concurrently against a magic-link sender that's already a rate-limit target elsewhere in this
+ * app is the wrong place to first find that out. A CSV of this size is an admin paving a list,
+ * not a hot path — a few seconds of sequential sends is the safe trade.
+ */
+export async function createInvitationsBulk(formData: FormData): Promise<void> {
+  const session = await requireAdmin();
+  const raw = String(formData.get('emails') ?? '');
+
+  // Accept newline, comma, or semicolon separated — whatever a practitioner list pastes in as.
+  const candidates = raw
+    .split(/[\n,;]+/)
+    .map((e) => e.trim())
+    .filter((e) => e.length > 0);
+
+  const seen = new Set<string>();
+  let created = 0;
+  let reused = 0;
+  let invalid = 0;
+  let failed = 0;
+
+  for (const candidate of candidates) {
+    const normalized = candidate.toLowerCase();
+    if (seen.has(normalized)) continue; // dedupe within the same paste
+    seen.add(normalized);
+
+    const outcome = await inviteOne(candidate, session.user.id);
+    if (outcome === 'created') created += 1;
+    else if (outcome === 'reused') reused += 1;
+    else if (outcome === 'invalid') invalid += 1;
+    else failed += 1;
   }
 
   revalidatePath('/admin/invites');
+  redirect(
+    `/admin/invites?bulk_created=${created}&bulk_reused=${reused}&bulk_invalid=${invalid}&bulk_failed=${failed}`,
+  );
 }
 
 export async function revokeInvitation(formData: FormData): Promise<void> {
