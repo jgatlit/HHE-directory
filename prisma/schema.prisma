@@ -43,8 +43,9 @@ model User {
   accounts            Account[]
   sessions            Session[]
   practitioner        Practitioner?
-  invitationsSent     Invitation[]  @relation("InvitedBy")
-  invitationsAccepted Invitation[]  @relation("AcceptedBy")
+  invitationsSent     Invitation[]         @relation("InvitedBy")
+  invitationsAccepted Invitation[]         @relation("AcceptedBy")
+  emailChangeRequests EmailChangeRequest[]
 }
 
 enum Role {
@@ -641,6 +642,29 @@ model Invitation {
 
   @@index([email])
   @@index([acceptedAt])
+}
+
+/// Practitioner self-serve email change, gated on proving control of the NEW address before
+/// `User.email` moves. Magic-link is the only sign-in path, so writing the address immediately
+/// (the old `updateAccountEmail` behavior) meant a typo was a total, unrecoverable-without-admin
+/// lockout. A dedicated model rather than reusing Auth.js's `VerificationToken`: that table is
+/// owned by the auth adapter and keyed on `[identifier, token]` with `identifier` meaning "the
+/// email a sign-in link was sent to" — repurposing it for "the NEW email of an in-progress
+/// change" risks colliding with a concurrent sign-in token for that same address.
+///
+/// One pending request per user — enforced by `@@unique([userId])` below, not merely by app-level
+/// delete-then-insert. `requestAccountEmailChange` upserts on that constraint, so a double-submit
+/// or a retried POST cannot leave two live rows racing each other for the same account.
+model EmailChangeRequest {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newEmail  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model City {

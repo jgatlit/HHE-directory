@@ -19,6 +19,32 @@ export const EMAIL_FROM =
   process.env.EMAIL_FROM ?? 'Natural Health Pros <onboarding@resend.dev>';
 
 /**
+ * Normalize + validate an email the way the auth stack compares them.
+ *
+ * `adminEmails()` in src/auth.ts lowercases before matching, the onboarding gate compares
+ * `session.user.email?.toLowerCase()` against `invitation.email.toLowerCase()`, and
+ * `User.email` is `@unique`. Storing a mixed-case address therefore works everywhere EXCEPT
+ * the uniqueness index, which is case-sensitive — so `Jane@x.com` and `jane@x.com` would be two
+ * users, two practitioners, and one very confused person. Lowercase on write.
+ */
+export function normalizeEmail(raw: string): string | null {
+  const email = raw.trim().toLowerCase();
+  if (!email || email.length > 320) return null;
+  // Deliberately permissive: the authoritative test of an address is whether the magic link
+  // arrives, not a regex. This rejects only what cannot possibly be an address.
+  if (!/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
+/** Escape user-supplied text before interpolating it into an HTML email body. An email's local
+ *  part only excludes whitespace and `@` (see normalizeEmail above) — `<`, `>`, and `"` all pass
+ *  validation, so anything embedded verbatim into a template is a phishing/HTML-injection surface
+ *  reachable by typing a crafted address into a form. */
+export function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
  * Missing configuration, distinct from a failed send. Callers usually want to treat these
  * differently: a cron should abort the whole run with a 500 when the key is absent (nothing will
  * ever succeed), but fail soft on one recipient's send so the rest of the batch still goes out.

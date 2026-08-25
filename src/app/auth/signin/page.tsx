@@ -2,11 +2,16 @@ import { signIn } from '@/auth';
 import { Mail } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 
-type Props = { searchParams: { callbackUrl?: string; error?: string } };
+type Props = {
+  searchParams: { callbackUrl?: string; error?: string; emailChanged?: string };
+};
 
 export default function SignInPage({ searchParams }: Props) {
   const callbackUrl = searchParams.callbackUrl ?? '/';
   const error = searchParams.error;
+  // A flag, not the address itself — an email address is not something to carry in a URL
+  // (referrer headers, browser history, server logs).
+  const emailChanged = searchParams.emailChanged === '1';
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-12">
@@ -18,6 +23,12 @@ export default function SignInPage({ searchParams }: Props) {
               We&apos;ll send a magic link to your email.
             </p>
           </div>
+
+          {emailChanged && (
+            <div className="rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-xs">
+              Your sign-in email was updated. Sign in with your new address below to continue.
+            </div>
+          )}
 
           {error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
