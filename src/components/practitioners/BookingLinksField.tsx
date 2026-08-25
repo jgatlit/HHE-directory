@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, X, ExternalLink } from 'lucide-react';
 import { SortableList } from '@/components/practitioners/SortableList';
 import { duplicateBookingRowKeys } from '@/lib/booking-links';
@@ -66,6 +66,33 @@ export function BookingLinksField({ initial, formId }: Props) {
    */
   const announce = () =>
     root.current?.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+
+  /**
+   * Relay every input/change bubbling inside this field — typing, the "Main" radio, and the
+   * `announce()` above (itself covering add/remove and SortableList's own reorder-announce,
+   * since SortableList is nested inside this root) — on to the ACTUAL form.
+   *
+   * `form={formId}` on the inputs above only restores SUBMISSION: the HTML `form` attribute
+   * governs which FormData a control's value joins, not where its DOM events bubble. This field
+   * now renders as a sibling of `<form id={formId}>` (see edit/page.tsx — booking links sit next
+   * to Offerings, physically outside the profile form), so every one of those events bubbles
+   * through this component's own ancestry and dead-ends before ever reaching the form —
+   * UnsavedChangesBar listens on the form element itself and never sees any of them. Re-dispatch
+   * directly on the form, which is what its existing, unmodified listener already expects.
+   */
+  useEffect(() => {
+    const node = root.current;
+    if (!node) return;
+    const relay = () => {
+      document.getElementById(formId)?.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    node.addEventListener('input', relay);
+    node.addEventListener('change', relay);
+    return () => {
+      node.removeEventListener('input', relay);
+      node.removeEventListener('change', relay);
+    };
+  }, [formId]);
 
   const update = (id: string, patch: Partial<Omit<Row, 'id' | 'dbId'>>) =>
     setRows((r) => r.map((row) => (row.id === id ? { ...row, ...patch } : row)));
