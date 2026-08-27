@@ -43,7 +43,15 @@ export function PractitionerHero({
 }: Props) {
   return (
     <header className="space-y-5">
-      <div className="aspect-[4/5] w-full overflow-hidden rounded-2xl bg-muted shadow-md ring-1 ring-border">
+      {/* CAPPED AT 280px, and the cap is the point (tsk_17bfb456 e1).
+          A bare `aspect-[4/5]` renders 440px at this 22rem column, which pushed the booking CTA to
+          y=968 on Sarah Schindler's live profile — so ZERO booking options were visible without
+          scrolling at a 720px or 900px fold, on all three practitioners who have links. Measured,
+          not estimated. That defeats the thing this section exists for: Amy did not NOTICE the
+          offerings.
+          `max-h` rather than a different ratio: the aspect ratio still governs on narrow columns,
+          and `object-cover` keeps the portrait framed rather than squashing it. */}
+      <div className="aspect-[4/5] max-h-[280px] w-full overflow-hidden rounded-2xl bg-muted shadow-md ring-1 ring-border">
         {photoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={photoUrl} alt={displayName} className="h-full w-full object-cover" />
