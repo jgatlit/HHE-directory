@@ -9,6 +9,11 @@ import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { paymentsLive } from '@/lib/booking-flow';
 import { offeringTarget } from '@/lib/profile-ctas';
 import { OfferingCard } from '@/components/practitioners/OfferingCard';
+import {
+  OfferingsSummaryRail,
+  offeringAnchorId,
+} from '@/components/practitioners/OfferingsSummaryRail';
+import { OfferingDetailOpener } from '@/components/practitioners/OfferingDetailOpener';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { PractitionerHero } from '@/components/practitioners/PractitionerHero';
@@ -82,6 +87,7 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
     id: o.id,
     title: o.title,
     priceUsdCents: o.priceUsdCents,
+    duration: o.duration,
     isConsult: o.isConsult,
     bookingLinkId: o.bookingLinkId,
     listingVisibility: o.listingVisibility,
@@ -142,6 +148,8 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
           </div>
         )}
         <Card className="p-6 sm:p-12">
+          {/* Additive only — the rail's anchors already scroll without it (see the component). */}
+          <OfferingDetailOpener />
           <div className="grid gap-12 sm:grid-cols-[22rem_1fr]">
             {/* Sticky identity + booking rail (Variation B) */}
             <aside className="min-w-0 space-y-6 sm:sticky sm:top-8 sm:self-start">
@@ -169,6 +177,18 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 offerings={ctaOfferings}
                 primaryBookingLinkId={p.primaryBookingLinkId}
                 websiteUrl={p.websiteUrl}
+              />
+              {/* UNDER the primary CTA, in the LEFT pane — the shape Amy reacted to on the 08-26
+                  call ("See, that looks great!"). Only LISTED offerings: a LINK_ONLY free consult
+                  stays reachable through the booking-link chooser and nowhere else (§4, D3). */}
+              <OfferingsSummaryRail
+                offerings={gridOfferings.map((o) => ({
+                  id: o.id,
+                  title: o.title,
+                  priceUsdCents: o.priceUsdCents,
+                  interval: o.interval,
+                  duration: o.duration,
+                }))}
               />
             </aside>
 
@@ -246,6 +266,7 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                     {gridOfferings.map((o) => (
                       <OfferingCard
                         key={o.id}
+                        anchorId={offeringAnchorId(o.id)}
                         title={o.title}
                         description={o.description}
                         priceUsdCents={o.priceUsdCents}

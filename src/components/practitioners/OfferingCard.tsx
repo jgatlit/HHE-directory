@@ -13,6 +13,8 @@ type Props = {
   href: string | null;
   /** §9 payments_live — changes the action wording only, never whether the card expands. */
   canTransact: boolean;
+  /** DOM id the left-pane rail anchors to. Omitted where the card is not rail-addressable. */
+  anchorId?: string;
 };
 
 /**
@@ -37,11 +39,13 @@ export function OfferingCard({
   duration,
   href,
   canTransact,
+  anchorId,
 }: Props) {
   const suffix = intervalSuffix(interval);
 
   return (
-    <li className="rounded-lg border bg-card">
+    // `scroll-mt` so the sticky rail above does not cover the card the anchor just jumped to.
+    <li id={anchorId} className="scroll-mt-8 rounded-lg border bg-card">
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center gap-3 p-3 transition-colors hover:bg-accent/30 [&::-webkit-details-marker]:hidden">
           <div className="min-w-0 flex-1">
@@ -67,8 +71,20 @@ export function OfferingCard({
         </summary>
 
         <div className="space-y-3 border-t px-3 pb-3 pt-3">
+          {/* FORMATTED, not a raw text block (Amy, 08-26). Practitioners paste multi-paragraph
+              descriptions and the single <p> ran them together into a wall — on the one surface
+              whose entire job is to do the selling. Split on blank lines, exactly as the bio
+              does, so the two read consistently. */}
           {description ? (
-            <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
+            <div className="space-y-2 text-xs leading-relaxed text-muted-foreground">
+              {description
+                .split(/\n{2,}/)
+                .map((para) => para.trim())
+                .filter(Boolean)
+                .map((para, i) => (
+                  <p key={i}>{para}</p>
+                ))}
+            </div>
           ) : (
             <p className="text-xs italic text-muted-foreground">No description yet.</p>
           )}

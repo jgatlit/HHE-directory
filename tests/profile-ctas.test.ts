@@ -9,6 +9,7 @@ import {
   chooserOptionTarget,
   type CtaOffering,
   type CtaBookingLink,
+  linkPriceHint,
 } from '@/lib/profile-ctas';
 
 const link = (id: string, o: Partial<CtaBookingLink> = {}): CtaBookingLink => ({
@@ -22,6 +23,7 @@ const off = (id: string, o: Partial<CtaOffering> = {}): CtaOffering => ({
   id,
   title: `Offering ${id}`,
   priceUsdCents: 5000,
+  duration: null,
   isConsult: false,
   bookingLinkId: null,
   listingVisibility: 'LISTED',
@@ -172,5 +174,47 @@ describe('chooserOptionTarget — the two chooser paths share one construction',
     expect(chooserOptionTarget('a/b', 'L 1', 'o&1')).toContain('/practitioners/a%2Fb/book');
     expect(chooserOptionTarget('s', 'L 1', 'o&1')).toContain('link=L+1');
     expect(chooserOptionTarget('s', 'L1', 'o&1')).toContain('offering=o%261');
+  });
+});
+
+describe('linkPriceHint — booking links are no longer barren (§4, 08-26 call)', () => {
+  it('returns the exact price and duration when one offering is linked', () => {
+    const hint = linkPriceHint([off('a', { priceUsdCents: 12500, duration: 60 })]);
+    expect(hint).toEqual({ minCents: 12500, maxCents: 12500, duration: 60 });
+  });
+
+  it('returns a RANGE when several are linked, never one arbitrary price', () => {
+    const hint = linkPriceHint([
+      off('a', { priceUsdCents: 12500, duration: 60 }),
+      off('b', { priceUsdCents: 4900, duration: 30 }),
+    ]);
+    expect(hint?.minCents).toBe(4900);
+    expect(hint?.maxCents).toBe(12500);
+    // Durations disagree, so naming one would misdescribe the other.
+    expect(hint?.duration).toBeNull();
+  });
+
+  it('keeps the duration when several linked offerings agree on it', () => {
+    const hint = linkPriceHint([
+      off('a', { priceUsdCents: 12500, duration: 60 }),
+      off('b', { priceUsdCents: 4900, duration: 60 }),
+    ]);
+    expect(hint?.duration).toBe(60);
+  });
+
+  it('returns NULL for a link with no offerings rather than inventing "Free"', () => {
+    // A link with nothing pointing at it has no price. Rendering "Free" would claim something
+    // the practitioner never said — on the surface a buyer acts from.
+    expect(linkPriceHint([])).toBeNull();
+  });
+
+  it('reports a zero-price offering as an honest 0, not as absent', () => {
+    const hint = linkPriceHint([off('free', { priceUsdCents: 0, duration: 20 })]);
+    expect(hint).toEqual({ minCents: 0, maxCents: 0, duration: 20 });
+  });
+
+  it('ignores a zero or null duration instead of rendering "0 min"', () => {
+    expect(linkPriceHint([off('a', { duration: 0 })])?.duration).toBeNull();
+    expect(linkPriceHint([off('a', { duration: null })])?.duration).toBeNull();
   });
 });

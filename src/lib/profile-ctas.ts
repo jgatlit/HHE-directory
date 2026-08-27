@@ -2,6 +2,8 @@ export type CtaOffering = {
   id: string;
   title: string;
   priceUsdCents: number;
+  /** Minutes. Null when the practitioner has not said. */
+  duration: number | null;
   isConsult: boolean;
   bookingLinkId: string | null;
   listingVisibility: 'LISTED' | 'LINK_ONLY';
@@ -124,4 +126,34 @@ export function offeringTarget(slug: string, offering: CtaOffering): string {
 export function chooserOptionTarget(slug: string, linkId: string, offeringId: string): string {
   const params = new URLSearchParams({ link: linkId, offering: offeringId });
   return `/practitioners/${encodeURIComponent(slug)}/book?${params}`;
+}
+
+/**
+ * Price + duration to show ON a Booking Link entry (§4, folded in from the 08-26 call).
+ *
+ * Amy: the booking-links block "feels barren compared to the offerings." A link has no price of
+ * its own — the price lives on the Offerings pointing at it — so this derives one:
+ *
+ *   1 linked   → that Offering's exact price and duration.
+ *   2+ linked  → a RANGE, because naming one price would misrepresent the others.
+ *   0 linked   → nothing. A link with no Offering has no price, and inventing "Free" here would
+ *                claim something the practitioner never said.
+ *
+ * Returns cents and minutes rather than formatted strings so the caller owns presentation and
+ * this stays assertable without matching on currency formatting.
+ */
+export function linkPriceHint(linked: CtaOffering[]): {
+  minCents: number;
+  maxCents: number;
+  duration: number | null;
+} | null {
+  if (linked.length === 0) return null;
+  const prices = linked.map((o) => o.priceUsdCents);
+  const minCents = Math.min(...prices);
+  const maxCents = Math.max(...prices);
+  // Only meaningful when it is unambiguous — one linked offering, or several that agree.
+  const durations = Array.from(
+    new Set(linked.map((o) => o.duration).filter((d): d is number => d != null && d > 0)),
+  );
+  return { minCents, maxCents, duration: durations.length === 1 ? durations[0]! : null };
 }
