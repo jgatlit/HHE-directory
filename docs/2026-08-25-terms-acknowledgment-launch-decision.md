@@ -1,7 +1,7 @@
 # Terms & Conditions click-to-acknowledge — sourcing, confidence, and the launch decision
 
 **Date:** 2026-08-25 · **Shipped:** PR #89 (`feat/terms-acknowledgment-onboarding`), merged to `main` at `67b8841`, verified live on `naturalhealthpros.com`.
-**Status:** Live in production, **pending Amy's review**. Not legally reviewed. This is the durable record of what shipped and why — the underlying draft rationale lived in `_handoff-context/tc-draft.md`, which is untracked (see caution at the bottom).
+**Status:** Live in production, **pending Amy's review**. Not legally reviewed. This is the durable record of what shipped and why; the underlying draft rationale lives alongside it in `_handoff-context/tc-draft.md`.
 
 ## What shipped
 
@@ -46,4 +46,4 @@ Also open: whether Section 6 (confidentiality) is what Sarah meant when she rais
 ## Outstanding follow-up
 
 - Amy's review of the four open brackets (§4, §5, §8, §11), and Sarah's confirmation on §6, are still needed. Nothing currently tracks this as a ticket — worth opening one if it doesn't happen soon, since an unreviewed liability clause is the kind of thing that's easy to forget once the feature has shipped and looks "done."
-- **`_handoff-context/tc-draft.md`** — the file `TermsAcknowledgment.tsx`'s own doc comment points to for full sourcing rationale — is **untracked** (not committed, not gitignored; confirmed via `git status`/`git check-ignore` on 2026-08-25). If that directory is ever cleaned up, that in-code reference will dangle. This document is written to stand on its own for that reason, but the comment in the component still points at a file that may not exist for a future clone of this repo.
+- **`_handoff-context/tc-draft.md`** — the file `TermsAcknowledgment.tsx`'s own doc comment points to for full sourcing rationale — was untracked when this record was first written, which would have left that in-code reference dangling for any fresh clone. It is committed alongside this document, so the reference now resolves. This document is still written to stand on its own.
