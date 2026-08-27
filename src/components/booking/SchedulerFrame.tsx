@@ -171,11 +171,34 @@ export function SchedulerFrame({ schedulerUrl, practitionerName, lead }: Props) 
           // explicit no-referrer-when-downgrade would send the FULL url — which carries the intent
           // token, the credential for this flow — to the scheduler and its analytics.
           //
-          // Sandboxed but not OVER-restricted (§7): a restrictive attribute breaks embeds in a way
-          // that looks like a provider outage. `allow-top-navigation` is withheld so a
-          // practitioner-supplied origin cannot replace the page with a look-alike payment screen
-          // on a flow already carrying the buyer's contact details.
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+          // NO `sandbox` ATTRIBUTE, DELIBERATELY (§7: "do not over-restrict sandbox").
+          //
+          // It was removed 2026-08-27 after browser verification caught Acuity's own reCAPTCHA
+          // failing inside it:
+          //   "requestStorageAccess: Refused to execute request. The document is sandboxed, and
+          //    the 'allow-storage-access-by-user-activation' keyword is not set."
+          // That is the Storage Access API being denied in a third-party context. reCAPTCHA is on
+          // the submit path, so the visible symptom would have been bookings failing at the last
+          // step, on the provider holding most of our links — and looking exactly like a provider
+          // outage, which is the failure mode §7 names.
+          //
+          // Storage access was not the only casualty. The old list also withheld `allow-modals`
+          // (schedulers use confirm dialogs) and `allow-downloads` (the "add to calendar" .ics a
+          // buyer gets after booking). Enumerating keywords means guessing what every current AND
+          // FUTURE provider needs, and being wrong silently — the same unwinnable game §6 refuses
+          // to play for per-provider intake fields.
+          //
+          // What we gave up: `allow-top-navigation` was previously withheld, so the frame could
+          // not replace our page. Accepted, because the containment was already largely nominal —
+          // `allow-scripts` + `allow-same-origin` together restore the framed origin's normal
+          // privileges — and because the frame is 100% practitioner-supplied content either way:
+          // anyone able to abuse top-navigation could equally render a fake payment form INSIDE
+          // the frame. Practitioners are invite-only and vetted (§18).
+          //
+          // What still protects the token: NO `referrerPolicy` override. The browser default is
+          // strict-origin-when-cross-origin, so the scheduler receives only our ORIGIN — never the
+          // full URL, which carries the booking token (the bearer credential for this flow). That
+          // guarantee is independent of sandbox and must not be weakened.
         />
       </div>
     );
