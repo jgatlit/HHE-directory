@@ -10,6 +10,7 @@ import {
   type CtaOffering,
   type CtaBookingLink,
   linkPriceHint,
+  offeringsSurfacedByLinks,
 } from '@/lib/profile-ctas';
 
 const link = (id: string, o: Partial<CtaBookingLink> = {}): CtaBookingLink => ({
@@ -266,5 +267,43 @@ describe('free consult — BOTH configurations are valid (operator ruling 2026-0
     // reachable there and nowhere else (§4, D3).
     expect(offeringsForLink([free, paid], 'catchall')).toHaveLength(2);
     expect(bookingLinkTarget('sarah', l, [free, paid])).toEqual({ kind: 'chooser' });
+  });
+});
+
+describe('offeringsSurfacedByLinks — the rail must not repeat the booking links (§14.1)', () => {
+  it('PURPOSE-BUILT: one link per offering surfaces every one of them', () => {
+    // Sarah Schindler's live shape, and the one that actually broke: 4 links, 3 carrying a
+    // specific offering. The link rows already show title + price + duration, so the rail
+    // would have printed the identical three entries directly beneath them.
+    const links = [link('free'), link('l1'), link('l2'), link('l3')];
+    const offs = [
+      off('o1', { bookingLinkId: 'l1' }),
+      off('o2', { bookingLinkId: 'l2' }),
+      off('o3', { bookingLinkId: 'l3' }),
+    ];
+    expect(offeringsSurfacedByLinks(links, offs)).toEqual(new Set(['o1', 'o2', 'o3']));
+  });
+
+  it('CATCH-ALL: one link with many offerings surfaces NONE of them', () => {
+    // The link can only show a price RANGE and names no offering, so the rail is the only place
+    // they appear and must not be suppressed.
+    const links = [link('catchall')];
+    const offs = [
+      off('o1', { bookingLinkId: 'catchall' }),
+      off('o2', { bookingLinkId: 'catchall' }),
+    ];
+    expect(offeringsSurfacedByLinks(links, offs).size).toBe(0);
+  });
+
+  it('a bare free-consult link (zero offerings) surfaces nothing', () => {
+    expect(offeringsSurfacedByLinks([link('consult')], []).size).toBe(0);
+  });
+
+  it('leaves an unlinked offering in the rail — nothing else shows it', () => {
+    const links = [link('l1')];
+    const offs = [off('o1', { bookingLinkId: 'l1' }), off('standalone', { bookingLinkId: null })];
+    const surfaced = offeringsSurfacedByLinks(links, offs);
+    expect(surfaced.has('o1')).toBe(true);
+    expect(surfaced.has('standalone')).toBe(false);
   });
 });

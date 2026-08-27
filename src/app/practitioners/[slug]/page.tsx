@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { QUALIFICATIONS_HEADING } from '@/lib/profile-sections';
 import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { paymentsLive } from '@/lib/booking-flow';
-import { offeringTarget } from '@/lib/profile-ctas';
+import { offeringTarget, offeringsSurfacedByLinks } from '@/lib/profile-ctas';
 import { OfferingCard } from '@/components/practitioners/OfferingCard';
 import {
   OfferingsSummaryRail,
@@ -116,6 +116,9 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
       };
     });
 
+  // Computed once, not per offering inside the filter below.
+  const surfacedByLink = offeringsSurfacedByLinks(p.bookingLinks, ctaOfferings);
+
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-16">
       <div className="mx-auto max-w-4xl space-y-4">
@@ -182,13 +185,18 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                   call ("See, that looks great!"). Only LISTED offerings: a LINK_ONLY free consult
                   stays reachable through the booking-link chooser and nowhere else (§4, D3). */}
               <OfferingsSummaryRail
-                offerings={gridOfferings.map((o) => ({
+                // Skip anything a Booking Link row above already shows in full. On a
+                // purpose-built profile (one link per offering) that is ALL of them, and without
+                // this the same three titles and prices render twice in one column.
+                offerings={gridOfferings
+                  .filter((o) => !surfacedByLink.has(o.id))
+                  .map((o) => ({
                   id: o.id,
                   title: o.title,
                   priceUsdCents: o.priceUsdCents,
                   interval: o.interval,
-                  duration: o.duration,
-                }))}
+                    duration: o.duration,
+                  }))}
               />
             </aside>
 

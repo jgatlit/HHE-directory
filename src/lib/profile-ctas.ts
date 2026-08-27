@@ -157,3 +157,33 @@ export function linkPriceHint(linked: CtaOffering[]): {
   );
   return { minCents, maxCents, duration: durations.length === 1 ? durations[0]! : null };
 }
+
+/**
+ * Offering ids ALREADY fully displayed by a Booking Link entry in the rail.
+ *
+ * A link with exactly ONE linked Offering renders that Offering's title, price and duration on its
+ * own row (see `linkPriceHint`), so repeating it in the Offerings rail below prints the same list
+ * twice in the same column.
+ *
+ * ⚠️ THIS IS TOPOLOGY-DEPENDENT, which is why it was missed until real data was rendered (§14.1):
+ *   - CATCH-ALL (1 link → N offerings): the link shows a price RANGE and names nothing, so every
+ *     offering still needs the rail. Nothing is suppressed.
+ *   - PURPOSE-BUILT (N links → 1 offering each): every link row already IS its offering, so the
+ *     rail would duplicate all of them. Sarah Schindler's live profile is this shape — 4 links, 3
+ *     of them carrying a specific `offering=` — and it rendered the same three titles and prices
+ *     twice, ~40px apart.
+ *
+ * A link with 0 linked Offerings (the typical free consult, §3 shape A) surfaces nothing and
+ * suppresses nothing.
+ */
+export function offeringsSurfacedByLinks(
+  links: CtaBookingLink[],
+  offerings: CtaOffering[],
+): Set<string> {
+  const surfaced = new Set<string>();
+  for (const link of links) {
+    const linked = offeringsForLink(offerings, link.id);
+    if (linked.length === 1) surfaced.add(linked[0]!.id);
+  }
+  return surfaced;
+}
