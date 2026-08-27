@@ -218,3 +218,53 @@ describe('linkPriceHint — booking links are no longer barren (§4, 08-26 call)
     expect(linkPriceHint([off('a', { duration: null })])?.duration).toBeNull();
   });
 });
+
+describe('free consult — BOTH configurations are valid (operator ruling 2026-08-27)', () => {
+  // The spec (§3, D2) and tsk_17bfb456 appeared to contradict each other on whether a free
+  // consult "is" an Offering. The ruling: it depends on how the practitioner configured it, and
+  // BOTH shapes must work. Booking Links and Offerings are distinct entities; a Booking Link may
+  // link to zero, one or many Offerings.
+
+  it('SHAPE A (typical) — a bare Booking Link with NO Offerings is a working free consult', () => {
+    const l = link('consult');
+    // No Whop item, no price tag, nothing to charge for.
+    const target = bookingLinkTarget('sarah', l, []);
+    expect(target).toEqual({
+      kind: 'flow',
+      href: '/practitioners/sarah/book?link=consult',
+    });
+    // Straight into the flow — NOT a chooser, and carrying no offering id.
+    if (target.kind !== 'flow') throw new Error('narrow');
+    expect(target.href).not.toContain('offering=');
+
+    // It is primary-CTA-able: a single link is promoted to the hero with none designated.
+    expect(resolveHeroLink([l], null)).toEqual(l);
+
+    // And there is genuinely no price to state, so none is invented.
+    expect(linkPriceHint([])).toBeNull();
+  });
+
+  it('SHAPE B — a zero-price Offering on a link is also a free consult, and labels itself', () => {
+    const l = link('catchall');
+    const free = off('free', { priceUsdCents: 0, isConsult: true, bookingLinkId: 'catchall' });
+    // This is the shape §3 exists for: a free consult COEXISTING with paid services on one link,
+    // which shape A cannot express.
+    expect(ctaLabelFor(l, [free])).toBe('Book a free consultation');
+    expect(linkPriceHint([free])).toEqual({ minCents: 0, maxCents: 0, duration: null });
+  });
+
+  it('SHAPE B stays reachable when unlisted, which is the only place it appears', () => {
+    const l = link('catchall');
+    const free = off('free', {
+      priceUsdCents: 0,
+      isConsult: true,
+      bookingLinkId: 'catchall',
+      listingVisibility: 'LINK_ONLY',
+    });
+    const paid = off('deep', { priceUsdCents: 19900, bookingLinkId: 'catchall' });
+    // Chooser membership ignores listingVisibility — that is what makes an unlisted free consult
+    // reachable there and nowhere else (§4, D3).
+    expect(offeringsForLink([free, paid], 'catchall')).toHaveLength(2);
+    expect(bookingLinkTarget('sarah', l, [free, paid])).toEqual({ kind: 'chooser' });
+  });
+});

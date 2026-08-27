@@ -29,9 +29,17 @@ type Props = {
  * hint when the link has no Offerings pointing at it — there is genuinely no price to state, and
  * inventing one would claim something the practitioner never said.
  */
-function linkSubLine(linked: Parameters<typeof linkPriceHint>[0], url: string): string {
+function linkSubLine(
+  link: CtaBookingLink,
+  linked: Parameters<typeof linkPriceHint>[0],
+): string {
   const hint = linkPriceHint(linked);
-  if (!hint) return hostHint(url);
+  // ZERO LINKED OFFERINGS IS THE TYPICAL FREE CONSULT (operator ruling 2026-08-27): a bare Booking
+  // Link with no Whop item and no price. There is genuinely no price to state, so prefer the
+  // link's own label and fall back to the scheduler host only when it has none. Showing
+  // "calendly.com" as the sub-line of the most common free-consult shape is the worst of the
+  // three options, and it was what the secondary CTA did while the hero already did this.
+  if (!hint) return link.label?.trim() || linkDisplayLabel(link, linked) || hostHint(link.url);
 
   const price =
     hint.minCents === hint.maxCents
@@ -164,7 +172,7 @@ function HeroCta({
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{label}</p>
         <p className="truncate text-xs opacity-80">
-          {linked.length > 0 ? linkSubLine(linked, link.url) : linkDisplayLabel(link, linked)}
+          {linkSubLine(link, linked)}
         </p>
       </div>
       <ChevronRight
@@ -210,7 +218,7 @@ function SecondaryCta({
       <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{linkDisplayLabel(link, linked)}</p>
-        <p className="truncate text-xs text-muted-foreground">{linkSubLine(linked, link.url)}</p>
+        <p className="truncate text-xs text-muted-foreground">{linkSubLine(link, linked)}</p>
       </div>
       <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
     </Link>
