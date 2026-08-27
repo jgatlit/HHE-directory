@@ -1,6 +1,13 @@
 import NextAuth from 'next-auth';
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { authConfig } from '@/auth.config';
+import {
+  ATTRIBUTION_COOKIE,
+  ATTRIBUTION_WINDOW_DAYS,
+  resolveAttribution,
+  signAttribution,
+  verifyAttribution,
+} from '@/lib/attribution';
 
 // Build the middleware's auth instance from the EDGE-SAFE config only (no Prisma adapter)
 // so this Edge Function stays under Vercel's 1 MB limit.
@@ -15,7 +22,63 @@ import { authConfig } from '@/auth.config';
 // providers. Keep this empty. See docs/runbooks/auth-middleware-missing-adapter.md.
 const { auth } = NextAuth({ ...authConfig, providers: [] });
 
-export default auth((req) => {
+/**
+ * FIRST-TOUCH ATTRIBUTION (§16, D14) — stamped on the first request to ANY page.
+ *
+ * FIRST TOUCH WINS: an existing, still-valid cookie is never overwritten. That is the whole
+ * mechanism, not a nicety — re-resolving on a later pageview would hand every practitioner-shared
+ * visit to NHP the moment the visitor clicked through to /search.
+ *
+ * No JavaScript, no iframe, no client cooperation: this runs before a byte of the page is sent,
+ * so it works with scripting disabled and with the scheduler frame blocked outright.
+ *
+ * Never throws. An attribution failure must not take the site down, so a missing secret or a
+ * crypto error degrades to "no cookie this request" — the next request tries again.
+ */
+async function stampAttribution(req: NextRequest, res: NextResponse): Promise<NextResponse> {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    // Loud, because silence here looks identical to working attribution while every commission
+    // calculation quietly loses its basis.
+    console.warn('[attribution] AUTH_SECRET unset — first-touch attribution is NOT being recorded');
+    return res;
+  }
+
+  try {
+    const now = Date.now();
+    const existing = await verifyAttribution(
+      req.cookies.get(ATTRIBUTION_COOKIE)?.value,
+      secret,
+      now,
+    );
+    if (existing) return res; // First touch already held. Do not overwrite.
+
+    const attribution = resolveAttribution({
+      pathname: req.nextUrl.pathname,
+      searchParams: req.nextUrl.searchParams,
+      referrer: req.headers.get('referer'),
+      selfHost: req.nextUrl.hostname,
+      now,
+    });
+
+    res.cookies.set(ATTRIBUTION_COOKIE, await signAttribution(attribution, secret), {
+      // HttpOnly so no script can read or forge it; signed as well, because HttpOnly stops a
+      // script READING the cookie, not a client SENDING one — and this value decides who is paid.
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: req.nextUrl.protocol === 'https:',
+      path: '/',
+      maxAge: ATTRIBUTION_WINDOW_DAYS * 24 * 60 * 60,
+    });
+  } catch (err) {
+    console.error('[attribution] failed to stamp first touch', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return res;
+}
+
+export default auth(async (req) => {
   const { pathname, search } = req.nextUrl;
   const session = req.auth;
   // Round-trip the full path INCLUDING the query string: /onboarding carries
@@ -41,7 +104,10 @@ export default auth((req) => {
       return NextResponse.redirect(signinUrl);
     }
   }
-  return NextResponse.next();
+  // Stamped on the PASS-THROUGH path only. The redirects above go to /auth/signin and
+  // /auth/error, which are themselves matched by this middleware and get stamped on arrival —
+  // so nothing is missed, and a gated-route bounce does not record the gate as the landing page.
+  return stampAttribution(req, NextResponse.next());
 });
 
 export const config = {
