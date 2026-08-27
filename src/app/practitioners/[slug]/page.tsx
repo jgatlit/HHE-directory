@@ -4,10 +4,16 @@ import type { Metadata } from 'next';
 import { CheckCircle2, Pencil } from 'lucide-react';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
+import { QUALIFICATIONS_HEADING } from '@/lib/profile-sections';
 import { OFFERING_ORDER, SPECIALTY_ORDER } from '@/lib/practitioner-ordering';
 import { paymentsLive } from '@/lib/booking-flow';
-import { offeringTarget } from '@/lib/profile-ctas';
+import { offeringTarget, offeringsSurfacedByLinks } from '@/lib/profile-ctas';
 import { OfferingCard } from '@/components/practitioners/OfferingCard';
+import {
+  OfferingsSummaryRail,
+  offeringAnchorId,
+} from '@/components/practitioners/OfferingsSummaryRail';
+import { OfferingDetailOpener } from '@/components/practitioners/OfferingDetailOpener';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { PractitionerHero } from '@/components/practitioners/PractitionerHero';
@@ -65,12 +71,13 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
     !!session?.user &&
     (session.user.id === p.userId || session.user.role === 'ADMIN');
 
-  // Dual-label: canonical names = curated rail chips; rawLabels = the practitioner's own
-  // phrasing, listed under "Specialties". Parent rollups excluded from the chip set to keep it tight.
+  // Dual-label: canonical names = curated rail chips. Parent rollups excluded from the chip set
+  // to keep it tight.
+  //
+  // The `rawLabel` side no longer has a public surface — the right-pane list that rendered it was
+  // removed as redundant (see the Qualifications section below). The data is untouched and still
+  // feeds search; only the rendering went.
   const canonicalChips = Array.from(new Set(p.specialties.map((ps) => ps.specialty.name)));
-  const rawModalities = Array.from(
-    new Set(p.specialties.map((ps) => ps.rawLabel?.trim()).filter((l): l is string => !!l)),
-  );
 
   // Two layers, deliberately (§4, D3):
   //   listingVisibility → what the public GRID shows
@@ -80,6 +87,7 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
     id: o.id,
     title: o.title,
     priceUsdCents: o.priceUsdCents,
+    duration: o.duration,
     isConsult: o.isConsult,
     bookingLinkId: o.bookingLinkId,
     listingVisibility: o.listingVisibility,
@@ -107,6 +115,9 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
         href: actionable ? offeringTarget(p.slug, { ...o }) : null,
       };
     });
+
+  // Computed once, not per offering inside the filter below.
+  const surfacedByLink = offeringsSurfacedByLinks(p.bookingLinks, ctaOfferings);
 
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-16">
@@ -140,6 +151,8 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
           </div>
         )}
         <Card className="p-6 sm:p-12">
+          {/* Additive only — the rail's anchors already scroll without it (see the component). */}
+          <OfferingDetailOpener />
           <div className="grid gap-12 sm:grid-cols-[22rem_1fr]">
             {/* Sticky identity + booking rail (Variation B) */}
             <aside className="min-w-0 space-y-6 sm:sticky sm:top-8 sm:self-start">
@@ -167,6 +180,23 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 offerings={ctaOfferings}
                 primaryBookingLinkId={p.primaryBookingLinkId}
                 websiteUrl={p.websiteUrl}
+              />
+              {/* UNDER the primary CTA, in the LEFT pane — the shape Amy reacted to on the 08-26
+                  call ("See, that looks great!"). Only LISTED offerings: a LINK_ONLY free consult
+                  stays reachable through the booking-link chooser and nowhere else (§4, D3). */}
+              <OfferingsSummaryRail
+                // Skip anything a Booking Link row above already shows in full. On a
+                // purpose-built profile (one link per offering) that is ALL of them, and without
+                // this the same three titles and prices render twice in one column.
+                offerings={gridOfferings
+                  .filter((o) => !surfacedByLink.has(o.id))
+                  .map((o) => ({
+                  id: o.id,
+                  title: o.title,
+                  priceUsdCents: o.priceUsdCents,
+                  interval: o.interval,
+                    duration: o.duration,
+                  }))}
               />
             </aside>
 
@@ -201,22 +231,31 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 </section>
               )}
 
-              {/* Heading is "Specialties", not "How I work": this section renders the
-                  practitioner's own specialty phrasing, and the old title misdescribed it.
-                  Sarah Schindler, reviewing her own page 2026-08-11: "the How I Work title
-                  doesn't fit in with the… I get the specialties, but the How I Work doesn't." */}
-              {rawModalities.length > 0 && (
+              {/* QUALIFICATIONS — replaces the right-pane specialties list, which repeated the
+                  chips already shown in the identity rail on the left. Amy originated the ask
+                  from her own 08-17 interface review and confirmed it on the 08-26 call.
+
+                  ⚠️ CONSEQUENCE WORTH KNOWING: the removed list rendered the practitioner's OWN
+                  specialty phrasing (`rawLabel`), while the left-pane chips render the CANONICAL
+                  names. They are not the same strings, so the raw phrasing now renders nowhere on
+                  the public profile. It is still stored, and still feeds search. Sarah Schindler
+                  valued that section enough on 2026-08-11 to ask for its heading to be corrected,
+                  so if anyone asks where her wording went, this is the answer.
+
+                  The heading is an env-backed constant because Amy floated three variants and
+                  picked none — see profile-sections.ts. */}
+              {p.qualifications.length > 0 && (
                 <section
-                  aria-label="Specialties"
+                  aria-label={QUALIFICATIONS_HEADING}
                   className="space-y-2 rounded-xl bg-secondary/40 p-6"
                 >
                   <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Specialties
+                    {QUALIFICATIONS_HEADING}
                   </h2>
                   <ul className="divide-y rounded-lg border bg-card">
-                    {rawModalities.map((m) => (
-                      <li key={m} className="px-3 py-2.5 text-sm">
-                        {m}
+                    {p.qualifications.map((q) => (
+                      <li key={q} className="px-3 py-2.5 text-sm">
+                        {q}
                       </li>
                     ))}
                   </ul>
@@ -235,6 +274,10 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                     {gridOfferings.map((o) => (
                       <OfferingCard
                         key={o.id}
+                        anchorId={offeringAnchorId(o.id)}
+                        // The rail renders the same LISTED offerings, so this card drops its
+                        // duplicate price line and shows it in the expanded detail instead.
+                        railed
                         title={o.title}
                         description={o.description}
                         priceUsdCents={o.priceUsdCents}

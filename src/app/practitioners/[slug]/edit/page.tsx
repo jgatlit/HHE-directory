@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Check, AlertCircle, X, Sparkles } from 'lucide-react';
 import { auth } from '@/auth';
+import { QUALIFICATIONS_HEADING } from '@/lib/profile-sections';
 import { prisma } from '@/lib/prisma';
 import { isWhopPlatformsReady } from '@/lib/whop';
 import { profileCompletenessSignals } from '@/lib/practitioner-indexer';
@@ -496,6 +497,19 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
                 name="whoIHelp"
                 rows={3}
                 defaultValue={practitioner.whoIHelp ?? ''}
+                className="w-full rounded-md border bg-card px-3 py-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
+              />
+            </Field>
+
+            <Field
+              label={QUALIFICATIONS_HEADING}
+              hint="One per line — degrees, certifications and training, in your own words. Shown on your public profile. “Draft my profile with AI” fills this in from what you paste, and you can edit every line."
+            >
+              <textarea
+                name="qualifications"
+                rows={4}
+                defaultValue={practitioner.qualifications.join('\n')}
+                placeholder={'BS in Nutrition, Bastyr University\nCertified Herbalist, HHE'}
                 className="w-full rounded-md border bg-card px-3 py-2 text-sm outline-none ring-ring/30 focus-visible:ring-2"
               />
             </Field>

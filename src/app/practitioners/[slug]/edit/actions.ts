@@ -270,6 +270,14 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   const headline = String(formData.get('headline') ?? '').trim() || null;
   const tagline = String(formData.get('tagline') ?? '').trim() || null;
   const whoIHelp = String(formData.get('whoIHelp') ?? '').trim() || null;
+  // ONE CREDENTIAL PER LINE. A textarea rather than a repeatable row editor because these are
+  // unordered free-text lines with no per-row state — the least technical cohort in the product
+  // can paste a list from their CV and be done. Blank lines dropped; order preserved as typed.
+  const qualifications = String(formData.get('qualifications') ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 40);
   const websiteUrl = normalizeWebsiteUrl(String(formData.get('websiteUrl') ?? ''));
   const telehealth = formData.get('telehealth') === 'on' || formData.get('telehealth') === 'true';
   const inPerson = formData.get('inPerson') === 'on' || formData.get('inPerson') === 'true';
@@ -374,6 +382,7 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
         headline,
         tagline,
         whoIHelp,
+        qualifications,
         websiteUrl,
         telehealth,
         inPerson,
@@ -386,6 +395,9 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
           headline,
           bio,
           whoIHelp,
+          // Credentials are a real search term ("Bastyr", "certified herbalist"), so they belong
+          // in the index rather than being display-only.
+          ...qualifications,
           resolvedCity?.name,
           resolvedCity?.state,
           ...rawLabels,
@@ -654,6 +666,12 @@ export async function generateDraftAction(slug: string, formData: FormData): Pro
         tagline: draft.tagline || null,
         whoIHelp: draft.whoIHelp || null,
         bio: draft.bio || null,
+        // A DRAFT the practitioner then edits, exactly like headline/tagline/bio above — never
+        // presented as authoritative. Empty is a correct outcome: the extraction is strictly
+        // extractive, so a source that names no credentials yields none rather than inventing
+        // one, and an invented credential on a health directory is a different class of wrong
+        // from clumsy wording.
+        qualifications: draft.qualifications,
         searchText: buildSearchText([
           practitioner.displayName,
           draft.headline,
@@ -853,6 +871,12 @@ export async function submitOnboarding(slug: string, formData: FormData): Promis
         tagline: draft.tagline || null,
         whoIHelp: draft.whoIHelp || null,
         bio: draft.bio || null,
+        // A DRAFT the practitioner then edits, exactly like headline/tagline/bio above — never
+        // presented as authoritative. Empty is a correct outcome: the extraction is strictly
+        // extractive, so a source that names no credentials yields none rather than inventing
+        // one, and an invented credential on a health directory is a different class of wrong
+        // from clumsy wording.
+        qualifications: draft.qualifications,
         cityId,
         telehealth,
         inPerson,

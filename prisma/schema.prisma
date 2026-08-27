@@ -107,6 +107,15 @@ enum BookingEntryPoint {
   OFFERING_CARD
 }
 
+/// Who earns commission on a booking (§16, §17).
+///
+/// PRACTITIONER is 0% and NHP is 20% — the rate lives in code (`COMMISSION_RATE`), not here,
+/// because a rate change must not be a migration. This enum records WHO, not HOW MUCH.
+enum LeadAttributionParty {
+  PRACTITIONER
+  NHP
+}
+
 enum BookingIntentStatus {
   PENDING
   SCHEDULED
@@ -193,6 +202,18 @@ model Practitioner {
   /// feed it. Do NOT wire it back into the rail without re-reading §4's CTA hierarchy.
   firstSessionPriceCents Int? // first-session price in cents; render as $X.XX
   hheCertified           Boolean  @default(true) // HHE-certification trust badge (pilots are HHE grads)
+
+  /// Qualifications / certifications / education — one credential per entry, in the
+  /// practitioner's own words ("BS in Nutrition, Bastyr University").
+  ///
+  /// Replaces the redundant right-pane specialties list, which repeated the chips already shown
+  /// in the identity rail. Amy originated this ask from her own 08-17 interface review.
+  ///
+  /// A scalar list rather than a relation, deliberately: these are unordered free-text lines with
+  /// no per-row state, nothing links to them, and modelling them as rows would buy an id, a join
+  /// and a sort_order that nothing would ever use. Defaults to empty, so the migration is
+  /// expand-safe and every existing practitioner reads as "none stated" rather than null.
+  qualifications String[]
 
   cityId      String?
   city        City?                   @relation(fields: [cityId], references: [id])
@@ -543,13 +564,31 @@ model BookingIntent {
 
   entryPoint BookingEntryPoint
 
-  // Step 1 (§5) is LEAD CAPTURE, NOT INTAKE — four fields, deliberately minimal. The
+  // Step 1 (§5) is LEAD CAPTURE, NOT INTAKE. TWO fields as of the single-view design (D12) — the
   // practitioner's own scheduler already asks its intake questions and we neither can nor should
-  // duplicate them (§6: no per-practitioner intake-field mapper).
+  // duplicate them (§6: no per-practitioner intake-field mapper). `phone` and `note` are retained
+  // and still populated by older/imported rows; the live form no longer collects them.
   name  String
   email String
   phone String?
   note  String?
+
+  /// ATTRIBUTION, SNAPSHOTTED AT ROW CREATION (§16, D14).
+  ///
+  /// The snapshot is the entire point: the cookie it comes from expires, and without a copy taken
+  /// here a completed booking's attribution would silently change — or vanish — when it did. This
+  /// is what commission is calculated from, so it must be immutable once written.
+  ///
+  /// ALL NULLABLE, deliberately. Migrations auto-apply during the build while the PREVIOUS deploy
+  /// is still serving traffic and still inserting rows that know nothing about these columns, so
+  /// a NOT NULL here would fail every capture mid-deploy. Null also honestly means "we never
+  /// resolved one" — every row created before this shipped.
+  attributionParty  LeadAttributionParty?
+  /// The diagnostic that EXPLAINS the party (REF_PARAM, ORGANIC_SEARCH, …). Never a second source
+  /// of truth for who is paid — that is `attributionParty` alone.
+  attributionSource String?
+  /// Full first-touch context: referrer host, campaign params, landing path, first-touch ms epoch.
+  attribution       Json?
 
   /// `ch_…` — the Whop checkout CONFIGURATION minted for THIS booking, and what the embed mounts.
   ///

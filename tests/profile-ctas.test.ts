@@ -9,6 +9,8 @@ import {
   chooserOptionTarget,
   type CtaOffering,
   type CtaBookingLink,
+  linkPriceHint,
+  offeringsSurfacedByLinks,
 } from '@/lib/profile-ctas';
 
 const link = (id: string, o: Partial<CtaBookingLink> = {}): CtaBookingLink => ({
@@ -22,6 +24,7 @@ const off = (id: string, o: Partial<CtaOffering> = {}): CtaOffering => ({
   id,
   title: `Offering ${id}`,
   priceUsdCents: 5000,
+  duration: null,
   isConsult: false,
   bookingLinkId: null,
   listingVisibility: 'LISTED',
@@ -172,5 +175,135 @@ describe('chooserOptionTarget — the two chooser paths share one construction',
     expect(chooserOptionTarget('a/b', 'L 1', 'o&1')).toContain('/practitioners/a%2Fb/book');
     expect(chooserOptionTarget('s', 'L 1', 'o&1')).toContain('link=L+1');
     expect(chooserOptionTarget('s', 'L1', 'o&1')).toContain('offering=o%261');
+  });
+});
+
+describe('linkPriceHint — booking links are no longer barren (§4, 08-26 call)', () => {
+  it('returns the exact price and duration when one offering is linked', () => {
+    const hint = linkPriceHint([off('a', { priceUsdCents: 12500, duration: 60 })]);
+    expect(hint).toEqual({ minCents: 12500, maxCents: 12500, duration: 60 });
+  });
+
+  it('returns a RANGE when several are linked, never one arbitrary price', () => {
+    const hint = linkPriceHint([
+      off('a', { priceUsdCents: 12500, duration: 60 }),
+      off('b', { priceUsdCents: 4900, duration: 30 }),
+    ]);
+    expect(hint?.minCents).toBe(4900);
+    expect(hint?.maxCents).toBe(12500);
+    // Durations disagree, so naming one would misdescribe the other.
+    expect(hint?.duration).toBeNull();
+  });
+
+  it('keeps the duration when several linked offerings agree on it', () => {
+    const hint = linkPriceHint([
+      off('a', { priceUsdCents: 12500, duration: 60 }),
+      off('b', { priceUsdCents: 4900, duration: 60 }),
+    ]);
+    expect(hint?.duration).toBe(60);
+  });
+
+  it('returns NULL for a link with no offerings rather than inventing "Free"', () => {
+    // A link with nothing pointing at it has no price. Rendering "Free" would claim something
+    // the practitioner never said — on the surface a buyer acts from.
+    expect(linkPriceHint([])).toBeNull();
+  });
+
+  it('reports a zero-price offering as an honest 0, not as absent', () => {
+    const hint = linkPriceHint([off('free', { priceUsdCents: 0, duration: 20 })]);
+    expect(hint).toEqual({ minCents: 0, maxCents: 0, duration: 20 });
+  });
+
+  it('ignores a zero or null duration instead of rendering "0 min"', () => {
+    expect(linkPriceHint([off('a', { duration: 0 })])?.duration).toBeNull();
+    expect(linkPriceHint([off('a', { duration: null })])?.duration).toBeNull();
+  });
+});
+
+describe('free consult — BOTH configurations are valid (operator ruling 2026-08-27)', () => {
+  // The spec (§3, D2) and tsk_17bfb456 appeared to contradict each other on whether a free
+  // consult "is" an Offering. The ruling: it depends on how the practitioner configured it, and
+  // BOTH shapes must work. Booking Links and Offerings are distinct entities; a Booking Link may
+  // link to zero, one or many Offerings.
+
+  it('SHAPE A (typical) — a bare Booking Link with NO Offerings is a working free consult', () => {
+    const l = link('consult');
+    // No Whop item, no price tag, nothing to charge for.
+    const target = bookingLinkTarget('sarah', l, []);
+    expect(target).toEqual({
+      kind: 'flow',
+      href: '/practitioners/sarah/book?link=consult',
+    });
+    // Straight into the flow — NOT a chooser, and carrying no offering id.
+    if (target.kind !== 'flow') throw new Error('narrow');
+    expect(target.href).not.toContain('offering=');
+
+    // It is primary-CTA-able: a single link is promoted to the hero with none designated.
+    expect(resolveHeroLink([l], null)).toEqual(l);
+
+    // And there is genuinely no price to state, so none is invented.
+    expect(linkPriceHint([])).toBeNull();
+  });
+
+  it('SHAPE B — a zero-price Offering on a link is also a free consult, and labels itself', () => {
+    const l = link('catchall');
+    const free = off('free', { priceUsdCents: 0, isConsult: true, bookingLinkId: 'catchall' });
+    // This is the shape §3 exists for: a free consult COEXISTING with paid services on one link,
+    // which shape A cannot express.
+    expect(ctaLabelFor(l, [free])).toBe('Book a free consultation');
+    expect(linkPriceHint([free])).toEqual({ minCents: 0, maxCents: 0, duration: null });
+  });
+
+  it('SHAPE B stays reachable when unlisted, which is the only place it appears', () => {
+    const l = link('catchall');
+    const free = off('free', {
+      priceUsdCents: 0,
+      isConsult: true,
+      bookingLinkId: 'catchall',
+      listingVisibility: 'LINK_ONLY',
+    });
+    const paid = off('deep', { priceUsdCents: 19900, bookingLinkId: 'catchall' });
+    // Chooser membership ignores listingVisibility — that is what makes an unlisted free consult
+    // reachable there and nowhere else (§4, D3).
+    expect(offeringsForLink([free, paid], 'catchall')).toHaveLength(2);
+    expect(bookingLinkTarget('sarah', l, [free, paid])).toEqual({ kind: 'chooser' });
+  });
+});
+
+describe('offeringsSurfacedByLinks — the rail must not repeat the booking links (§14.1)', () => {
+  it('PURPOSE-BUILT: one link per offering surfaces every one of them', () => {
+    // Sarah Schindler's live shape, and the one that actually broke: 4 links, 3 carrying a
+    // specific offering. The link rows already show title + price + duration, so the rail
+    // would have printed the identical three entries directly beneath them.
+    const links = [link('free'), link('l1'), link('l2'), link('l3')];
+    const offs = [
+      off('o1', { bookingLinkId: 'l1' }),
+      off('o2', { bookingLinkId: 'l2' }),
+      off('o3', { bookingLinkId: 'l3' }),
+    ];
+    expect(offeringsSurfacedByLinks(links, offs)).toEqual(new Set(['o1', 'o2', 'o3']));
+  });
+
+  it('CATCH-ALL: one link with many offerings surfaces NONE of them', () => {
+    // The link can only show a price RANGE and names no offering, so the rail is the only place
+    // they appear and must not be suppressed.
+    const links = [link('catchall')];
+    const offs = [
+      off('o1', { bookingLinkId: 'catchall' }),
+      off('o2', { bookingLinkId: 'catchall' }),
+    ];
+    expect(offeringsSurfacedByLinks(links, offs).size).toBe(0);
+  });
+
+  it('a bare free-consult link (zero offerings) surfaces nothing', () => {
+    expect(offeringsSurfacedByLinks([link('consult')], []).size).toBe(0);
+  });
+
+  it('leaves an unlinked offering in the rail — nothing else shows it', () => {
+    const links = [link('l1')];
+    const offs = [off('o1', { bookingLinkId: 'l1' }), off('standalone', { bookingLinkId: null })];
+    const surfaced = offeringsSurfacedByLinks(links, offs);
+    expect(surfaced.has('o1')).toBe(true);
+    expect(surfaced.has('standalone')).toBe(false);
   });
 });

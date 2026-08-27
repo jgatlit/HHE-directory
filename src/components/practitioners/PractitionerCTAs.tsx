@@ -9,7 +9,8 @@ import {
   type CtaBookingLink,
   type CtaOffering,
 } from '@/lib/profile-ctas';
-import { chooserOptionTarget } from '@/lib/profile-ctas';
+import { chooserOptionTarget, linkPriceHint } from '@/lib/profile-ctas';
+import { formatPrice } from '@/lib/money';
 import { BookingChooser } from '@/components/practitioners/BookingChooser';
 
 type Props = {
@@ -20,6 +21,35 @@ type Props = {
   primaryBookingLinkId?: string | null;
   websiteUrl?: string | null;
 };
+
+/**
+ * The price/duration sub-line on a Booking Link entry (08-26 call).
+ *
+ * Amy: the booking-links block "feels barren compared to the offerings." Falls back to the host
+ * hint when the link has no Offerings pointing at it — there is genuinely no price to state, and
+ * inventing one would claim something the practitioner never said.
+ */
+function linkSubLine(
+  link: CtaBookingLink,
+  linked: Parameters<typeof linkPriceHint>[0],
+): string {
+  const hint = linkPriceHint(linked);
+  // ZERO LINKED OFFERINGS IS THE TYPICAL FREE CONSULT (operator ruling 2026-08-27): a bare Booking
+  // Link with no Whop item and no price. There is genuinely no price to state, so prefer the
+  // link's own label and fall back to the scheduler host only when it has none. Showing
+  // "calendly.com" as the sub-line of the most common free-consult shape is the worst of the
+  // three options, and it was what the secondary CTA did while the hero already did this.
+  if (!hint) return link.label?.trim() || linkDisplayLabel(link, linked) || hostHint(link.url);
+
+  const price =
+    hint.minCents === hint.maxCents
+      ? hint.minCents > 0
+        ? formatPrice(hint.minCents)
+        : 'Free'
+      : `${hint.minCents > 0 ? formatPrice(hint.minCents) : 'Free'}–${formatPrice(hint.maxCents)}`;
+
+  return hint.duration ? `${price} · ${hint.duration} min` : price;
+}
 
 function hostHint(url: string): string {
   try {
@@ -50,7 +80,16 @@ export function PractitionerCTAs({
   const secondary = bookingLinks.filter((l) => l.id !== hero?.id);
 
   return (
-    <section aria-label="Book & connect" className="space-y-3">
+    <section aria-labelledby="booking-links-heading" className="space-y-3">
+      {/* A HEADING, asked for on the 08-26 call. Without one the rail read as a bare stack of
+          buttons with no explanation of what it was for. Per-link wording stays overridable
+          through `cta_label`; this labels the block, not the buttons. */}
+      <h2
+        id="booking-links-heading"
+        className="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+      >
+        Book time with me now
+      </h2>
       {hero ? (
         <HeroCta slug={slug} link={hero} offerings={offerings} />
       ) : bookingLinks.length > 0 ? (
@@ -132,7 +171,9 @@ function HeroCta({
       <Calendar className="h-5 w-5 shrink-0" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{label}</p>
-        <p className="truncate text-xs opacity-80">{linkDisplayLabel(link, linked)}</p>
+        <p className="truncate text-xs opacity-80">
+          {linkSubLine(link, linked)}
+        </p>
       </div>
       <ChevronRight
         className="h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5"
@@ -177,7 +218,7 @@ function SecondaryCta({
       <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{linkDisplayLabel(link, linked)}</p>
-        <p className="truncate text-xs text-muted-foreground">{hostHint(link.url)}</p>
+        <p className="truncate text-xs text-muted-foreground">{linkSubLine(link, linked)}</p>
       </div>
       <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
     </Link>
