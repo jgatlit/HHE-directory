@@ -132,6 +132,37 @@ describe('signing — HttpOnly is not enough, this decides who is paid', () => {
   });
 });
 
+describe('first touch wins — the property the whole mechanism rests on', () => {
+  // The middleware guard is one line (`if (existing) return res`), and an untested one-line guard
+  // is exactly how a mechanism ends up inert while every other test still passes. This asserts
+  // the composition that guard performs: a still-valid cookie verifies, so the later visit is
+  // never re-resolved and the ORIGINAL landing values survive.
+  it('a valid earlier cookie still verifies on a later visit, so it is never re-resolved', async () => {
+    const firstTouch = resolve({ query: 'ref=sarah' }); // practitioner-shared link
+    const cookie = await signAttribution(firstTouch, SECRET);
+
+    // ...30 days later the same visitor arrives through our own /search page. Re-resolving THAT
+    // request would hand the booking to NHP and take 20% off a practitioner-driven lead.
+    const thirtyDaysLater = NOW + 30 * 24 * 60 * 60 * 1000;
+    const held = await verifyAttribution(cookie, SECRET, thirtyDaysLater);
+
+    expect(held).not.toBeNull();
+    expect(held!.party).toBe('PRACTITIONER');
+    expect(held!.ts).toBe(NOW);
+    expect(held!.landingPath).toBe('/practitioners/sarah-schindler');
+
+    // And for contrast: what the later request WOULD have resolved to on its own.
+    const wouldBe = resolveAttribution({
+      pathname: '/practitioners/sarah-schindler',
+      searchParams: new URLSearchParams(''),
+      referrer: 'https://naturalhealthpros.com/search',
+      selfHost: 'naturalhealthpros.com',
+      now: thirtyDaysLater,
+    });
+    expect(wouldBe.party).toBe('NHP');
+  });
+});
+
 describe('commission rates (§17)', () => {
   it('practitioner-driven traffic is never charged', () => {
     // Deliberate: practitioners must not be penalised for sending their own clients through us.
