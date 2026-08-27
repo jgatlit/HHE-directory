@@ -50,8 +50,14 @@ export function PractitionerHero({
           not estimated. That defeats the thing this section exists for: Amy did not NOTICE the
           offerings.
           `max-h` rather than a different ratio: the aspect ratio still governs on narrow columns,
-          and `object-cover` keeps the portrait framed rather than squashing it. */}
-      <div className="aspect-[4/5] max-h-[280px] w-full overflow-hidden rounded-2xl bg-muted shadow-md ring-1 ring-border">
+          and `object-cover` keeps the portrait framed rather than squashing it.
+
+          WHY 256 AND NOT 280: at 280 the first booking row's bottom landed at y=904 and missed a
+          900px fold by FOUR PIXELS — measured on the deployed preview, not estimated. A value that
+          close would regress silently the first time anyone adds a word to a headline. 256px
+          (`max-h-64`, a standard step) puts it near 880 with real margin. Two rows would need
+          ~202px, which is too small for a portrait to be worth it. */}
+      <div className="aspect-[4/5] max-h-64 w-full overflow-hidden rounded-2xl bg-muted shadow-md ring-1 ring-border">
         {photoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={photoUrl} alt={displayName} className="h-full w-full object-cover" />
