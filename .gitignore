@@ -50,3 +50,16 @@ amy-assets/
 .env.typescript
 .env*
 taglines-proposal.json
+
+# Claude Code local scratch — agent worktrees, local settings. Never project content.
+# A `git add -A` would otherwise stage .claude/worktrees/* as an embedded gitlink
+# (a broken submodule ref that clones cannot resolve).
+.claude/
+
+# Session handoff scaffolding. Local-only for the same reason as amy-assets/:
+# these discuss named individuals and carry their email addresses, and this repo
+# is PUBLIC. tc-draft.md is the deliberate exception — it is committed because
+# TermsAcknowledgment.tsx's doc comment references it (PR #93).
+_HANDOFF_*.md
+_handoff-context/*
+!_handoff-context/tc-draft.md
