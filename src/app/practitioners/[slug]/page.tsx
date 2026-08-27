@@ -267,6 +267,9 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                       <OfferingCard
                         key={o.id}
                         anchorId={offeringAnchorId(o.id)}
+                        // The rail renders the same LISTED offerings, so this card drops its
+                        // duplicate price line and shows it in the expanded detail instead.
+                        railed
                         title={o.title}
                         description={o.description}
                         priceUsdCents={o.priceUsdCents}
