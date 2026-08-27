@@ -37,6 +37,10 @@ export type ProfileDraft = {
   whoIHelp: string;
   bio: string;
   modalities: string[];
+  /** Credentials, certifications and education — one per entry, EXTRACTIVE ONLY (see the tool
+   *  schema). A drafted credential the practitioner never claimed is not a wording problem, it
+   *  is a fabricated qualification on a health directory. */
+  qualifications: string[];
   specialties: DraftSpecialty[];
   caseStudies: DraftCaseStudy[];
 };
@@ -117,6 +121,17 @@ const DRAFT_TOOL: Anthropic.Tool = {
         items: { type: 'string' },
         description: 'Distinct practice modalities / methods named in the source.',
       },
+      qualifications: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Credentials, certifications, degrees and training stated in the source — one per ' +
+          'entry, e.g. "BS in Nutrition, Bastyr University" or "Certified Herbalist, HHE". ' +
+          'STRICTLY EXTRACTIVE: include ONLY qualifications the source actually states. Never ' +
+          'infer a credential from a modality they practise, never upgrade an unaccredited ' +
+          'course to a degree, and never add a licence. Return an empty array if the source ' +
+          'names none — an empty section is correct, an invented credential is not.',
+      },
       specialties: {
         type: 'array',
         description: "Dual-label specialties. rawLabel = practitioner's wording; map to a catalog slug when one fits, else propose a new kebab-case slug + name.",
@@ -147,7 +162,10 @@ const DRAFT_TOOL: Anthropic.Tool = {
         },
       },
     },
-    required: ['headline', 'tagline', 'whoIHelp', 'bio', 'modalities', 'specialties', 'caseStudies'],
+    required: [
+      'headline', 'tagline', 'whoIHelp', 'bio', 'modalities', 'qualifications', 'specialties',
+      'caseStudies',
+    ],
   },
 };
 
@@ -260,8 +278,11 @@ function templateDraft(input: DraftInput): ProfileDraft {
 
   // Template never fabricates outcomes — and, for the same reason, never a tagline: `tagline`
   // is only ever carried through from an existing value here, else null.
+  // `qualifications: []` for the same reason as `caseStudies: []` — the template path does no
+  // extraction, and guessing a credential from keyword matching would put a qualification the
+  // practitioner never claimed onto a health-directory profile.
   return normalizeDraft(
-    { headline, tagline, whoIHelp, bio, modalities, specialties, caseStudies: [] },
+    { headline, tagline, whoIHelp, bio, modalities, qualifications: [], specialties, caseStudies: [] },
     input,
   );
 }
@@ -335,6 +356,10 @@ function normalizeDraft(raw: Partial<ProfileDraft>, input: DraftInput): ProfileD
     new Set(arr<string>(raw.modalities).map((m) => str(m)).filter(Boolean)),
   );
 
+  const qualifications = Array.from(
+    new Set(arr<string>(raw.qualifications).map((q) => str(q).trim()).filter(Boolean)),
+  );
+
   const taglineRaw = str(raw.tagline).trim();
 
   return {
@@ -345,6 +370,7 @@ function normalizeDraft(raw: Partial<ProfileDraft>, input: DraftInput): ProfileD
     whoIHelp: str(raw.whoIHelp),
     bio: str(raw.bio),
     modalities,
+    qualifications,
     specialties,
     caseStudies,
   };

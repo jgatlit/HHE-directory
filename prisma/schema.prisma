@@ -203,6 +203,18 @@ model Practitioner {
   firstSessionPriceCents Int? // first-session price in cents; render as $X.XX
   hheCertified           Boolean  @default(true) // HHE-certification trust badge (pilots are HHE grads)
 
+  /// Qualifications / certifications / education — one credential per entry, in the
+  /// practitioner's own words ("BS in Nutrition, Bastyr University").
+  ///
+  /// Replaces the redundant right-pane specialties list, which repeated the chips already shown
+  /// in the identity rail. Amy originated this ask from her own 08-17 interface review.
+  ///
+  /// A scalar list rather than a relation, deliberately: these are unordered free-text lines with
+  /// no per-row state, nothing links to them, and modelling them as rows would buy an id, a join
+  /// and a sort_order that nothing would ever use. Defaults to empty, so the migration is
+  /// expand-safe and every existing practitioner reads as "none stated" rather than null.
+  qualifications String[]
+
   cityId      String?
   city        City?                   @relation(fields: [cityId], references: [id])
   specialties PractitionerSpecialty[]
