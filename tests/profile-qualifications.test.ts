@@ -74,3 +74,23 @@ describe('QUALIFICATIONS_HEADING — the title Amy has not picked yet', () => {
     expect(mod.QUALIFICATIONS_HEADING).toBe('Education & Experience');
   });
 });
+
+describe('the qualifications tool schema must keep its exclusion rules', () => {
+  // The prompt is the ONLY thing standing between a practitioner's book deal and a heading that
+  // reads "Certifications & Education". A live dry run against all 15 practitioners produced
+  // "Author of Short-Term Keto", "Host of the Inside Out Health Podcast", "Creator of the Coach
+  // Tara App" and "Preparing for NBHWC board certification" — all faithfully extracted, none of
+  // them a credential. This asserts the rules that fixed that are still present, because deleting
+  // a sentence from a prompt is invisible to every other check in the repo.
+  it('excludes accomplishments and in-progress certifications', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync('src/lib/onboarding-draft.ts', 'utf8'),
+    );
+    const desc = src.slice(src.indexOf('qualifications: {'), src.indexOf('specialties: {'));
+    for (const rule of ['books authored', 'podcasts hosted', 'companies founded', 'still in progress']) {
+      expect(desc).toContain(rule);
+    }
+    // And the load-bearing consequence, stated so it cannot be softened into a suggestion.
+    expect(desc).toContain('must return an EMPTY array');
+  });
+});
