@@ -26,6 +26,20 @@ export type CaptureResult =
   | { ok: true; value: { name: string; email: string; phone: string | null; note: string | null } }
   | { ok: false; code: CaptureErrorCode };
 
+/**
+ * What step 1 hands back to the single view (§5, D12).
+ *
+ * Lives HERE rather than beside the action because a `'use server'` module may only export async
+ * functions — and because the client component that consumes it must not pull the action's
+ * server-only imports (Prisma, `next/headers`) into its own module graph.
+ *
+ * `schedulerUrl` being null is the "subscription / no scheduling" row of §5: there is no calendar
+ * step to reveal, so the caller hands off to the flow shell instead of mounting a frame.
+ */
+export type StartBookingResult =
+  | { ok: true; token: string; schedulerUrl: string | null; nextUrl: string }
+  | { ok: false; code: CaptureErrorCode };
+
 /** Field caps. A public unauthenticated write must bound what it will store, independently of
  *  any rate limiter — see the note on enforcement in the capture action. */
 export const CAPTURE_LIMITS = { name: 120, email: 254, phone: 40, note: 2000 } as const;

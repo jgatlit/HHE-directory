@@ -1,11 +1,14 @@
 'use server';
 
-import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 import { bookableWhere } from '@/lib/practitioner-indexer';
 import { rateLimit } from '@/lib/rate-limit';
-import { parseCapture, type CaptureErrorCode } from '@/lib/booking-intent';
+import {
+  parseCapture,
+  type CaptureErrorCode,
+  type StartBookingResult,
+} from '@/lib/booking-intent';
 import { sendEmail } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
 
@@ -27,10 +30,16 @@ import { SITE_URL } from '@/lib/site';
  * is the per-practitioner email suppression below, which protects a practitioner's inbox and
  * nothing else. See vault tsk_4ed1cffe7423469eba7c.
  */
-export async function startBookingIntent(slug: string, formData: FormData): Promise<void> {
+export async function startBookingIntent(
+  slug: string,
+  formData: FormData,
+): Promise<StartBookingResult> {
   const raw = {
     name: String(formData.get('name') ?? ''),
     email: String(formData.get('email') ?? ''),
+    // Still parsed, still nullable, but NO LONGER COLLECTED: the single view is two fields by
+    // ruling (§5). Reading them here keeps the resume/import paths and the older token route
+    // working unchanged, and costs nothing when the form does not send them.
     phone: String(formData.get('phone') ?? ''),
     note: String(formData.get('note') ?? ''),
   };
@@ -38,29 +47,20 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
   const offeringId = String(formData.get('offeringId') ?? '').trim();
 
   /**
-   * Bounce back preserving what the buyer typed.
+   * Refuse with an ERROR CODE, never a message.
    *
-   * `code` is an ERROR CODE, never a message. The page renders it through a fixed lookup, so a
-   * crafted `?error=` cannot put attacker-chosen text inside a branded alert box on a page
-   * carrying the practitioner's real name — a phishing surface reachable by link alone.
+   * The caller renders it through a fixed lookup, so a crafted value cannot put attacker-chosen
+   * text inside a branded alert box on a public page carrying the practitioner's real name — a
+   * phishing surface that used to be reachable by link alone, back when this bounced through
+   * `?error=` on a redirect.
    *
-   * The typed values ride along because losing them is a guaranteed drop-off at the one step
-   * that is unconditional for every buyer: re-rendering an empty form after a mistyped email
-   * discards the note they just wrote, which on this product is often the reason they came.
+   * Returning rather than redirecting is what preserves what the buyer typed: the form is never
+   * re-rendered, so there is nothing to repopulate and nothing to lose.
    */
-  const bounce: (code: CaptureErrorCode) => never = (code) => {
-    const qs = new URLSearchParams({ error: code });
-    if (raw.name.trim()) qs.set('name', raw.name.slice(0, 200));
-    if (raw.email.trim()) qs.set('email', raw.email.slice(0, 300));
-    if (raw.phone.trim()) qs.set('phone', raw.phone.slice(0, 60));
-    if (raw.note.trim()) qs.set('note', raw.note.slice(0, 2100));
-    if (linkId) qs.set('link', linkId);
-    if (offeringId) qs.set('offering', offeringId);
-    redirect(`/practitioners/${encodeURIComponent(slug)}/book?${qs}`);
-  };
+  const refuse = (code: CaptureErrorCode): StartBookingResult => ({ ok: false, code });
 
   const parsed = parseCapture(raw);
-  if (!parsed.ok) bounce(parsed.code);
+  if (!parsed.ok) return refuse(parsed.code);
 
   // Gated by `bookableWhere()`, NOT `listedWhere()`. Unlisted practitioners stay bookable at
   // their direct link — that is what trial-sweep's warning email promises them — so the only
@@ -77,7 +77,9 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
       user: { select: { email: true } },
     },
   });
-  if (!practitioner) redirect(`/practitioners/${encodeURIComponent(slug)}`);
+  // IDOR discipline: "no such practitioner" and "not bookable" produce one identical refusal,
+  // the same one a stale offering id produces.
+  if (!practitioner) return refuse('CONTEXT_GONE');
 
   // Both ids are user-supplied; resolve each scoped to THIS practitioner.
   const [bookingLink, offering] = await Promise.all([
@@ -100,8 +102,8 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
   // enquiry without telling the buyer, and hand the practitioner a lead with no offering
   // attached and no indication anything was lost. (An offering can be archived while the buyer
   // has the form open, so this is reachable without any forgery at all.)
-  if (linkId && !bookingLink) bounce('CONTEXT_GONE');
-  if (offeringId && !offering) bounce('CONTEXT_GONE');
+  if (linkId && !bookingLink) return refuse('CONTEXT_GONE');
+  if (offeringId && !offering) return refuse('CONTEXT_GONE');
 
   const ip =
     headers().get('x-forwarded-for')?.split(',')[0]?.trim() ||
@@ -110,7 +112,7 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
   const limited = await rateLimit('booking-capture', ip, { limit: 20, windowSeconds: 600 });
   // CHECK the result. An earlier version awaited this and discarded it, so the limiter could
   // never block — not now, and not after KV is provisioned either.
-  if (!limited.success) bounce('TOO_MANY');
+  if (!limited.success) return refuse('TOO_MANY');
 
   // A per-practitioner burst bound that suppresses the EMAIL, never the capture.
   //
@@ -190,10 +192,31 @@ export async function startBookingIntent(slug: string, formData: FormData): Prom
     });
   }
 
+  // Resolve the calendar URL the caller will MOUNT IN PLACE. Selected as `{ url }` only —
+  // deliberately WITHOUT `provider` (D16). The adapter derives the provider from the URL at use,
+  // because the column is a reporting cache with a known-stale row: one live bookable link holds
+  // a `calendly.com` URL under `provider = OTHER`, and reading it here would silently drop that
+  // practitioner's buyers to the null adapter and lose their prefill.
+  const scheduler = resolvedLinkId
+    ? await prisma.bookingLink.findUnique({
+        where: { id: resolvedLinkId },
+        select: { url: true },
+      })
+    : null;
+
   // The token in the URL is what makes returning IDEMPOTENT — the T3 new-tab fallback and §10's
   // resume link both depend on it (§5, §8 failure table). A random token rather than the row's id,
   // because this URL is an unauthenticated bearer credential that §10 puts into inboxes.
-  redirect(`/practitioners/${encodeURIComponent(slug)}/book/${intent.publicToken}`);
+  //
+  // RETURNED, not redirected. The caller writes it into the address bar with `replaceState` and
+  // reveals the scheduler in place — no route change and no history entry, so the buyer's Back
+  // button still means "leave" rather than "undo a step" (§5, §8).
+  return {
+    ok: true,
+    token: intent.publicToken,
+    schedulerUrl: scheduler?.url ?? null,
+    nextUrl: `/practitioners/${encodeURIComponent(slug)}/book/${intent.publicToken}`,
+  };
 }
 
 async function sendLeadEmail(params: {
