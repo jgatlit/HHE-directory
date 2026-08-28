@@ -44,6 +44,8 @@ export type Attribution = {
   referrerHost: string | null;
   /** utm/click-id params, flattened. Bounded — see CAMPAIGN_KEYS. */
   campaign: Record<string, string>;
+  /** The `?ref=` value as given, so a 0% attribution names who claimed it. Null when absent. */
+  ref: string | null;
   landingPath: string;
   /** ms epoch of FIRST touch. The window is measured from here. */
   ts: number;
@@ -60,12 +62,23 @@ export const COMMISSION_RATE: Record<AttributionParty, number> = {
   NHP: 0.2,
 };
 
-/** Hosts that mean "organic search". Matched on the registrable host or any parent of it. */
+/**
+ * Hosts that mean "organic search". Matched on the registrable host or any parent of it.
+ *
+ * ⚠️ Google is matched by PATTERN, not by enumeration. An earlier version listed only
+ * `google.com` and `google.co.uk`, so organic traffic from google.de / .ca / .fr / .ie / .com.au
+ * resolved to the PRACTITIONER and billed at 0%. Enumerating ~190 ccTLDs by hand is exactly how
+ * that gap reappears. (That list also contained `search.marcia.com`, which is not a search engine
+ * at all — it made the list look more complete than it was.)
+ */
 const SEARCH_HOSTS = [
-  'google.com', 'google.co.uk', 'bing.com', 'duckduckgo.com', 'yahoo.com',
-  'ecosia.org', 'brave.com', 'search.marcia.com', 'baidu.com', 'yandex.com',
-  'startpage.com', 'qwant.com',
+  'bing.com', 'duckduckgo.com', 'yahoo.com', 'ecosia.org', 'brave.com',
+  'baidu.com', 'yandex.com', 'startpage.com', 'qwant.com', 'search.marginalia.nu',
+  'perplexity.ai', 'kagi.com',
 ];
+
+/** `google.com`, `google.de`, `google.co.uk`, `google.com.au`, `news.google.com` … */
+const GOOGLE_HOST = /(^|\.)google\.[a-z]{2,3}(\.[a-z]{2})?$/;
 
 /**
  * Params that mean a CAMPAIGN brought them. Bounded on purpose: this is copied into a signed
@@ -78,12 +91,15 @@ const CAMPAIGN_KEYS = [
 ];
 
 const MAX_CAMPAIGN_VALUE = 120;
+const MAX_REF_VALUE = 120;
+const MAX_LANDING_PATH = 200;
 
 function bareHost(host: string): string {
   return host.toLowerCase().replace(/^www\./, '');
 }
 
 function isSearchHost(host: string): boolean {
+  if (GOOGLE_HOST.test(host)) return true;
   return SEARCH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
@@ -131,31 +147,41 @@ export function resolveAttribution(input: {
     if (value) campaign[key] = value.slice(0, MAX_CAMPAIGN_VALUE);
   }
 
-  const base = { referrerHost, campaign, landingPath: pathname, ts: now };
+  // RECORD THE REF VALUE. Without it a waived commission is neither auditable nor attributable to
+  // a named practitioner — there was no way to answer "who claimed this visit?" after the fact.
+  const ref = searchParams.get('ref')?.trim().slice(0, MAX_REF_VALUE) || null;
+
+  // CAP the path. It was the only unbounded field: a long URL produced a cookie past the ~4096-byte
+  // browser limit, which the browser then silently DROPS — losing attribution entirely.
+  const base = {
+    referrerHost,
+    campaign,
+    ref,
+    landingPath: pathname.slice(0, MAX_LANDING_PATH),
+    ts: now,
+  };
   const isSelf = referrerHost !== null && referrerHost === bareHost(selfHost);
 
-  // 1 — explicit practitioner declaration.
-  if (searchParams.has('ref')) {
-    return { ...base, party: 'PRACTITIONER', source: 'REF_PARAM' };
-  }
-  // 2 — we paid for the click.
-  if (Object.keys(campaign).length > 0) {
-    return { ...base, party: 'NHP', source: 'PAID_CAMPAIGN' };
-  }
-  // 3 — organic search is ours.
+  // 1 — ORGANIC SEARCH IS ALWAYS OURS. Beats `?ref=`, beats everything.
   if (referrerHost && isSearchHost(referrerHost)) {
     return { ...base, party: 'NHP', source: 'ORGANIC_SEARCH' };
   }
-  // 4 — the directory itself is ours, whether they came from our own pages or landed on them.
+  // 2 — a campaign link is one WE shared, so it is ours. Also beats `?ref=`.
+  if (Object.keys(campaign).length > 0) {
+    return { ...base, party: 'NHP', source: 'PAID_CAMPAIGN' };
+  }
+  // 3 — anything that is not a practitioner's own profile page is the DIRECTORY, and ours. This
+  // includes `/`, `/search`, and any arrival from our own pages. A `?ref=` here is ignored by
+  // construction: practitioner attribution requires landing ON that practitioner's profile.
   if (isSelf || !isProfilePath(pathname)) {
     return { ...base, party: 'NHP', source: 'DIRECTORY' };
   }
-  // 5 — a profile reached directly, or from someone else's site. That is the practitioner's own
-  // audience: a shared link, her own website, a referral, dark social.
+  // 4 — a profile reached directly, from the practitioner's own site, or via her `?ref=` link.
+  // That is her own audience: a shared link, her website, a referral, dark social.
   return {
     ...base,
     party: 'PRACTITIONER',
-    source: referrerHost ? 'EXTERNAL_REFERRAL' : 'DIRECT_PROFILE',
+    source: ref ? 'REF_PARAM' : referrerHost ? 'EXTERNAL_REFERRAL' : 'DIRECT_PROFILE',
   };
 }
 

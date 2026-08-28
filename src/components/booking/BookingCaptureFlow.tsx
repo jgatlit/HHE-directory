@@ -96,7 +96,12 @@ export function BookingCaptureFlow({
 
     if (!result.ok) {
       setPhase('capture');
-      setError(CAPTURE_ERRORS[result.code as CaptureErrorCode] ?? CAPTURE_ERRORS.EMAIL_INVALID);
+      // Fall back to a NEUTRAL message. The previous fallback was EMAIL_INVALID, which told a
+      // buyer their email was wrong for any code not in the map — pointing them at the wrong field.
+      setError(
+        CAPTURE_ERRORS[result.code as CaptureErrorCode] ??
+          'Something went wrong saving your details. Please try again.',
+      );
       return;
     }
 
