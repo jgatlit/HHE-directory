@@ -12,43 +12,47 @@ const nextConfig = {
   },
 
   /**
-   * CONTENT SECURITY POLICY.
+   * SECURITY HEADERS — a hardening baseline, deliberately NOT a vendor allowlist.
    *
-   * The reason this exists: `SchedulerFrame.loadScript()` injects Calendly's and cal.com's
-   * widget scripts into OUR document — not into the iframe. They run with our origin's
-   * privileges on `/practitioners/[slug]/book/[token]`, a page holding the booking token (an
-   * unauthenticated bearer credential §10 emails to buyers) and the buyer's typed name and email.
+   * THE TRADEOFF, stated plainly. The threat is that Calendly's and cal.com's widget scripts run
+   * in OUR origin (loadScript injects them into our document, not the iframe) on a page holding
+   * the booking token and the buyer's name and email. The CSP directive that would actually bound
+   * that is `connect-src` pinned to a vendor list — and that is exactly the directive that breaks
+   * a practitioner's scheduler when a vendor adds a host we did not predict.
    *
-   * Before this, nothing constrained them and there was no `integrity` attribute — a
-   * trust-the-CDN position revocable by either vendor without any change on our side. A security
-   * review rated this ABOVE the iframe sandbox question it had been asked to look at.
+   * An earlier draft of this file did pin `connect-src` and `frame-src` to enumerated vendor
+   * hosts. That was wrong for this product, for the same reason the iframe sandbox allowlist was
+   * wrong: it silently breaks a real practitioner's booking page and looks like a provider
+   * outage. It had already missed one — Acuity's embed loads a Datadog SDK from a host that was
+   * not on the list. Enumerating a third party's infrastructure is a guess that ages badly, and
+   * the operator ruling is to trust the practitioner's vendor and keep the flow seamless.
    *
-   * ⚠️ `script-src` deliberately keeps 'unsafe-inline' and 'unsafe-eval'. Next.js's App Router
-   * ships inline bootstrap/flight scripts, and removing them needs per-request nonces via
-   * middleware. Doing that here would break every page for a policy that is not yet the binding
-   * constraint. The value delivered today is the HOST ALLOWLIST: a compromised third party can no
-   * longer be swapped for an arbitrary origin, and `connect-src` bounds where anything can
-   * exfiltrate TO. Nonces are the correct follow-up, not a blocker.
+   * So `connect-src`, `frame-src` and `img-src` are `https:` — any HTTPS host. What is still
+   * enforced costs nothing and cannot break a scheduler:
+   *   object-src 'none'      no plugin content, ever
+   *   base-uri 'self'        a `<base>` injection cannot repoint every relative URL
+   *   frame-ancestors 'none' we cannot be framed (clickjacking on a payment flow)
+   *   form-action 'self'     our own forms cannot be repointed; the scheduler's forms live in
+   *                          its own document under its own policy, so this does not touch them
+   *   the `https:` floor     blocks data:/blob:-sourced scripts and mixed content
    *
-   * `frame-src` lists the scheduler and checkout hosts. Adding a provider means adding it here
-   * too — the adapter table in scheduler-adapters.ts and this list must stay in step, or the
-   * embed silently fails to frame.
+   * `script-src` keeps 'unsafe-inline'/'unsafe-eval' because the App Router ships inline
+   * bootstrap and flight scripts; removing them needs per-request nonces in middleware. That is
+   * the real next step if this is ever tightened — not a vendor allowlist.
    */
   async headers() {
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://assets.calendly.com https://app.cal.com https://embed.acuityscheduling.com https://js.whop.com https://*.whop.com https://www.google.com https://www.gstatic.com",
-      "style-src 'self' 'unsafe-inline' https://assets.calendly.com https://fonts.googleapis.com",
-      "font-src 'self' data: https://fonts.gstatic.com",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
+      "style-src 'self' 'unsafe-inline' https:",
+      "font-src 'self' data: https:",
       "img-src 'self' data: blob: https:",
-      // Where anything on the page may send data. This is the exfiltration bound.
-      "connect-src 'self' https://*.calendly.com https://*.cal.com https://*.acuityscheduling.com https://*.squarespace.com https://*.whop.com https://*.typesense.net https://*.upstash.io https://*.ingest.sentry.io",
-      // Practitioner schedulers + Whop checkout. Keep in step with scheduler-adapters.ts.
-      "frame-src 'self' https://*.calendly.com https://*.cal.com https://*.acuityscheduling.com https://*.as.me https://*.savvycal.com https://*.whop.com https://www.google.com",
-      "frame-ancestors 'none'",
+      "connect-src 'self' https:",
+      "frame-src 'self' https:",
+      "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
-      "object-src 'none'",
+      "frame-ancestors 'none'",
     ].join('; ');
 
     return [
