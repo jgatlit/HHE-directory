@@ -125,12 +125,21 @@ const DRAFT_TOOL: Anthropic.Tool = {
         type: 'array',
         items: { type: 'string' },
         description:
-          'Credentials, certifications, degrees and training stated in the source — one per ' +
-          'entry, e.g. "BS in Nutrition, Bastyr University" or "Certified Herbalist, HHE". ' +
+          'Credentials, certifications, degrees and formal training stated in the source — one ' +
+          'per entry, e.g. "BS in Nutrition, Bastyr University" or "Certified Herbalist, HHE". ' +
           'STRICTLY EXTRACTIVE: include ONLY qualifications the source actually states. Never ' +
           'infer a credential from a modality they practise, never upgrade an unaccredited ' +
           'course to a degree, and never add a licence. Return an empty array if the source ' +
-          'names none — an empty section is correct, an invented credential is not.',
+          'names none — an empty section is correct, an invented credential is not. ' +
+          'THIS RENDERS UNDER A HEADING READING "Certifications & Education", so it must ' +
+          'contain ONLY things that are actually a qualification. EXCLUDE, even when the ' +
+          'source states them plainly: books authored, podcasts hosted, apps or programmes ' +
+          'created, companies founded, awards, media appearances, follower counts, and years ' +
+          'of experience or self-study — those are accomplishments, not credentials, and they ' +
+          'belong in the bio. ALSO EXCLUDE anything still in progress ("studying for", ' +
+          '"preparing for", "currently pursuing"): listing an unearned certification under ' +
+          'this heading reads as a claim to hold it. A practitioner with real accomplishments ' +
+          'but no stated credential must return an EMPTY array.',
       },
       specialties: {
         type: 'array',
