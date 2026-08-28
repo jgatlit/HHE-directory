@@ -20,10 +20,21 @@ import { SITE_URL, searchUrl } from '@/lib/search-url';
 import { signOutAction } from '@/components/site/actions';
 import { cn } from '@/lib/utils';
 
+/**
+ * ⚠️ THE FRAGMENT LINKS ARE ROOT-RELATIVE (`/#…`), NOT BARE (`#…`).
+ *
+ * `#how-it-works` and `#get-listed` are sections of the HOMEPAGE. While this header rendered only
+ * on the homepage a bare fragment was correct; the moment it also renders on `/search` and on a
+ * practitioner profile, a bare fragment resolves against the CURRENT page and scrolls nowhere —
+ * three dead links that still look and behave like live ones, with no error anywhere.
+ *
+ * `/#get-listed` is correct from every page, the homepage included: the browser sees a matching
+ * path and performs an ordinary same-document fragment scroll there, so nothing regresses.
+ */
 const NAV = [
   { label: 'Find a practitioner', href: searchUrl() },
-  { label: 'How it works', href: '#how-it-works' },
-  { label: 'For practitioners', href: '#get-listed' },
+  { label: 'How it works', href: '/#how-it-works' },
+  { label: 'For practitioners', href: '/#get-listed' },
 ];
 
 /** Shared styling for the identity slot, so the anchor and the sign-out button read as one row. */
@@ -134,7 +145,7 @@ export function SiteHeader({ profileHref = null, signedIn = false }: Props) {
             </a>
           )}
           <a
-            href="#get-listed"
+            href="/#get-listed"
             className="whitespace-nowrap rounded-lg border border-white/25 px-2.5 py-2 text-sm text-white transition-colors hover:border-white/50 sm:px-3.5"
           >
             Get listed

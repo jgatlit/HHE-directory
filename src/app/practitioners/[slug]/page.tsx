@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { CheckCircle2, Pencil } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, LogOut, Pencil } from 'lucide-react';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { QUALIFICATIONS_HEADING } from '@/lib/profile-sections';
@@ -18,6 +18,7 @@ import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { PractitionerHero } from '@/components/practitioners/PractitionerHero';
 import { PractitionerCTAs } from '@/components/practitioners/PractitionerCTAs';
+import { signOutAction } from '@/components/site/actions';
 
 type PageProps = { params: { slug: string }; searchParams: { onboarded?: string } };
 
@@ -139,17 +140,61 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
             </Link>
           </Card>
         )}
-        {canEdit && !searchParams.onboarded && (
-          <div className="flex justify-end">
-            <Link
-              href={`/practitioners/${params.slug}/edit`}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border bg-card px-4 text-xs font-medium transition-colors hover:bg-accent/40"
-            >
-              <Pencil className="h-3.5 w-3.5" aria-hidden />
-              Edit my profile
-            </Link>
-          </div>
-        )}
+        {/* TOP BAR — a subtle back link, NOT a site header.
+            
+            Operator ruling 2026-08-27, after the finding that a visitor landing here had no
+            navigation at all: "the profile page NEEDS a subtle top-left nav link, 'back to
+            Directory'… Keep it subtle: a small link/breadcrumb in the top-left, not a full site
+            header." That is deliberate and worth preserving — this page doubles as a
+            practitioner's shareable business card, and NHP chrome across the top of it competes
+            with the thing they are sharing. So `/search` and the homepage get `SiteHeader`; this
+            page gets one link, styled to match the identical "Back to profile" affordance already
+            on /edit.
+
+            Not cosmetic. Per D18 we attribute organic search landings to NHP rather than to the
+            practitioner, on the grounds that the traffic is ours — and until now those visitors
+            arrived on a page with no route into the directory at all. We were claiming the lead
+            and then dead-ending it.
+
+            SIGN-OUT sits on the right and is OWNER-ONLY, which is why it does not conflict with
+            the ruling above: a visitor never sees it. It is here because the sign-out shipped in
+            PR #72 lives inside SiteHeader, which rendered on the homepage alone — so a
+            practitioner who signed in and navigated to their own profile had no way to sign out
+            without first finding their way back to `/`. */}
+        <div className="flex items-center justify-between gap-3">
+          <Link
+            href="/search"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+            Directory
+          </Link>
+
+          {canEdit && (
+            <div className="flex items-center gap-2">
+              {/* The onboarded banner below already carries a dashboard link, so the pencil would
+                  be the second copy of it on that one render. Sign-out is not duplicated there. */}
+              {!searchParams.onboarded && (
+                <Link
+                  href={`/practitioners/${params.slug}/edit`}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border bg-card px-4 text-xs font-medium transition-colors hover:bg-accent/40"
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  Edit my profile
+                </Link>
+              )}
+              <form action={signOutAction}>
+                <button
+                  type="submit"
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+                >
+                  <LogOut className="h-3.5 w-3.5" aria-hidden />
+                  Sign out
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
         <Card className="p-6 sm:p-12">
           {/* Additive only — the rail's anchors already scroll without it (see the component). */}
           <OfferingDetailOpener />

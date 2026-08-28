@@ -9,11 +9,10 @@ import { ScopeBoundary } from '@/components/frontier/ScopeBoundary';
 import { Ledger } from '@/components/frontier/Ledger';
 import { TrustCheck, FilamentRule } from '@/components/frontier/Wordmark';
 import { SiteHeader } from '@/components/site/SiteHeader';
+import { siteIdentity } from '@/lib/site-identity';
 import { SiteFooter } from '@/components/site/SiteFooter';
 import { HeroSearch } from '@/components/site/HeroSearch';
 import { StructuredData } from '@/components/site/StructuredData';
-import { auth } from '@/auth';
-import { prisma } from '@/lib/prisma';
 import { getDirectory } from '@/lib/directory';
 import { getListed, hero, trustRow } from '@/content/copy';
 import { searchUrl, SITE_URL } from '@/lib/search-url';
@@ -78,24 +77,9 @@ export default async function Home({
   const forcedFailure = parseFailure(searchParams?.pipelineFailure);
   const { practitioners, specialties, cities, facts } = await getDirectory();
 
-  // Header identity. A signed-in practitioner should be offered their own page, not a sign-in
-  // screen they have already passed. Resolved here rather than in SiteHeader because that is a
-  // client component and there is no SessionProvider — mounting one around the whole tree to
-  // answer this would be a lot of machinery for one link.
-  //
-  // `signedIn` is passed SEPARATELY from `profileHref` because the two answer different
-  // questions and only one of them gates sign-out. `profileHref` is null both for signed-out
-  // visitors and for signed-in users with no practitioner record (an admin, say), so it cannot
-  // distinguish them — keying sign-out off it would strand precisely those accounts with no way
-  // out of their session.
-  const session = await auth();
-  const ownProfile = session?.user?.id
-    ? await prisma.practitioner.findUnique({
-        where: { userId: session.user.id },
-        select: { slug: true },
-      })
-    : null;
-  const profileHref = ownProfile ? `/practitioners/${ownProfile.slug}` : null;
+  // Header identity — now shared, because the header is no longer homepage-only. The
+  // signedIn/profileHref distinction that used to be explained here lives in siteIdentity().
+  const { profileHref, signedIn } = await siteIdentity();
 
   // Field density is the real directory: one node per listed practitioner,
   // grouped by how many specialties they hold.
@@ -111,7 +95,7 @@ export default async function Home({
   return (
     <>
       <StructuredData practitioners={practitioners} description={DESCRIPTION} />
-      <SiteHeader profileHref={profileHref} signedIn={Boolean(session?.user)} />
+      <SiteHeader profileHref={profileHref} signedIn={signedIn} />
 
       <main id="main">
         {/* ── HERO ─────────────────────────────────────────────────────────
