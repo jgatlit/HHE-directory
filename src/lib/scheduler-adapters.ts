@@ -82,7 +82,14 @@ export function schedulerEmbed(rawUrl: string, lead: SchedulerLead | null): Embe
   } catch {
     // Unparseable is the null adapter's job, not an exception. D9: OTHER is a first-class
     // outcome, never a validation failure.
-    return { kind: 'iframe', src: rawUrl, resizes: false };
+    //
+    // ⚠️ `withProtocol`, NOT `rawUrl`. Echoing the original string back put `javascript:` and
+    // `data:` straight into an iframe `src` — and React 18 (this repo) only WARNS on those; the
+    // hard block landed in React 19. It would have executed in OUR origin, on the page holding
+    // the booking token and the buyer's name and email. The save path blocks these, but two
+    // writers bypass it entirely: scripts/import-pilot-practitioners.ts (url straight from JSON)
+    // and scripts/seed-verify.ts. Prefixing forces the scheme to http(s).
+    return { kind: 'iframe', src: withProtocol, resizes: false };
   }
 
   switch (provider) {
