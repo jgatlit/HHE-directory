@@ -39,6 +39,9 @@ export type DirectoryPractitioner = {
   displayName: string;
   headline: string | null;
   photoUrl: string | null;
+  photoFocalX: number;
+  photoFocalY: number;
+  photoZoom: number;
   websiteUrl: string | null;
   telehealth: boolean | null;
   specialties: { name: string; slug: string; parent: string | null }[];
@@ -77,6 +80,9 @@ export async function getDirectory(): Promise<Directory> {
     displayName: p.displayName,
     headline: p.headline,
     photoUrl: p.photoUrl,
+    photoFocalX: p.photoFocalX,
+    photoFocalY: p.photoFocalY,
+    photoZoom: p.photoZoom,
     websiteUrl: p.websiteUrl,
     telehealth: p.telehealth,
     specialties: p.specialties.map((ps) => ({

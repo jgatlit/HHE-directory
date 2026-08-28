@@ -191,6 +191,20 @@ model Practitioner {
   tagline                String? // short hook above the whoIHelp paragraph; extractive-only (compressed from the practitioner's own words, never an invented claim). Optional — NOT a completeness signal.
   whoIHelp               String?  @db.Text // "who/how I help" block + matching signal (LLM-synthesized when source blank)
   photoUrl               String? // Vercel Blob URL; Avatar falls back to initials when null
+  /// NON-DESTRUCTIVE FRAMING for photoUrl — a focal point and a zoom, never a rewritten image.
+  ///
+  /// Every display frame uses `object-cover`, which crops to the CENTRE by default. Measured
+  /// 2026-08-28: 8 of the 13 real photos are exactly square while the hero frame is 4:5, so
+  /// centre-cropping silently removes ~20% of the sides of most portraits — heads sit off-centre
+  /// far more often than the centre default assumes.
+  ///
+  /// Stored as data rather than applied to the file on purpose. A destructive crop can be done
+  /// once; this is repeatable forever, needs no image pipeline, cannot corrupt the original, and
+  /// costs nothing to undo. The defaults below reproduce today's rendering EXACTLY, so every
+  /// existing row is already correct and no backfill is required.
+  photoFocalX            Float    @default(0.5) // 0 = left edge, 1 = right edge
+  photoFocalY            Float    @default(0.5) // 0 = top edge, 1 = bottom edge
+  photoZoom              Float    @default(1.0) // 1 = fit (cover), >1 magnifies about the focal point
   websiteUrl             String? // external site (classified out of overloaded col-D)
   telehealth             Boolean? // offers virtual sessions (~70% of pilot)
   inPerson               Boolean? // offers in-person sessions

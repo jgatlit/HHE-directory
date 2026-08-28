@@ -102,8 +102,19 @@ export function PhotoUploadField({ slug, initial }: Props) {
               </button>
             )}
           </div>
+          {/* THE SPEC, published where it is actually read — before choosing a file, not in a
+              document nobody opens. Sarah's complaint was an incohesive featured carousel, and
+              the cause is that nobody was ever told what shape to send.
+
+              800x1000 is the 4:5 the profile hero and the directory card both use. Square is
+              named explicitly because it is what people actually have — measured 2026-08-28, 8 of
+              13 real photos are exactly square — and saying "we'll crop the sides" up front is
+              more honest than letting them discover it afterwards. */}
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             JPG, PNG, WebP or GIF · up to 8MB. A clear headshot works best.
+            <br />
+            Best results at <strong>800&times;1000px</strong> (a 4:5 portrait). Square photos work
+            too — we&apos;ll trim the sides, and you can choose which part stays below.
           </p>
           {error && <p className="text-[11px] text-destructive">{error}</p>}
         </div>

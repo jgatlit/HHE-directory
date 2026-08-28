@@ -1,5 +1,6 @@
 import { MapPin, Video, Users, BadgeCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { DEFAULT_FRAMING, framingStyle, type PhotoFraming } from '@/lib/photo-framing';
 
 function initials(name: string) {
   return name
@@ -23,6 +24,8 @@ type Props = {
   /** Curated canonical specialty names — the clean tag set shown in the identity rail. */
   chips: string[];
   hheCertified?: boolean;
+  /** Practitioner-chosen framing. Omit for the pre-2026-08-28 centre crop. */
+  framing?: PhotoFraming;
 };
 
 /**
@@ -40,6 +43,7 @@ export function PractitionerHero({
   yearsInPractice,
   chips,
   hheCertified,
+  framing,
 }: Props) {
   return (
     <header className="space-y-5">
@@ -69,7 +73,15 @@ export function PractitionerHero({
       <div className="aspect-[4/5] w-full overflow-hidden rounded-2xl bg-muted shadow-md ring-1 ring-border">
         {photoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={photoUrl} alt={displayName} className="h-full w-full object-cover" />
+          <img
+            src={photoUrl}
+            alt={displayName}
+            className="h-full w-full object-cover"
+            // The practitioner's own framing. `object-cover` alone crops about the CENTRE, which
+            // is wrong for most headshots — see photo-framing.ts. Defaults reproduce the centre
+            // crop exactly, so a practitioner who never touches it sees no change.
+            style={framingStyle(framing ?? DEFAULT_FRAMING)}
+          />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-6xl font-medium text-muted-foreground">
             {initials(displayName)}

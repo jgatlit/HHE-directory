@@ -37,6 +37,7 @@ import { paymentsLive } from '@/lib/booking-flow';
 import { BookingLinksField } from '@/components/practitioners/BookingLinksField';
 import { SpecialtyComboboxField } from '@/components/practitioners/SpecialtyComboboxField';
 import { PhotoUploadField } from '@/components/practitioners/PhotoUploadField';
+import { PhotoFramingField } from '@/components/practitioners/PhotoFramingField';
 import { AiDraftPanel } from '@/components/practitioners/AiDraftPanel';
 
 type Props = {
@@ -464,6 +465,17 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
               hint="Shown on your profile hero and search card. Falls back to your initials when empty."
             >
               <PhotoUploadField slug={params.slug} initial={practitioner.photoUrl} />
+              {/* Framing sits directly under the uploader because the two are one task in a
+                  practitioner's head: "make my photo look right". Separating them is what forced
+                  a re-upload to fix a bad crop. */}
+              <PhotoFramingField
+                photoUrl={practitioner.photoUrl}
+                initial={{
+                  photoFocalX: practitioner.photoFocalX,
+                  photoFocalY: practitioner.photoFocalY,
+                  photoZoom: practitioner.photoZoom,
+                }}
+              />
             </Field>
 
             <Field label="Display name" required>
