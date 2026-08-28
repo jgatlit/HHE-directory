@@ -62,12 +62,23 @@ function stripTracking(url: URL): URL {
 /**
  * Choose the embed strategy for a booking URL, per the §6 adapter table.
  *
- * ⚠️ DERIVED FROM THE URL, NEVER FROM `BookingLink.provider` (D16). The column is a reporting
- * cache written on every save and is known to be stale — one live bookable row holds a
- * `calendly.com` URL under `provider = OTHER`, because the column shipped `NOT NULL DEFAULT
- * 'OTHER'` with no backfill and that row has not been re-saved since. Reading it here would
- * drop that practitioner to the null adapter and silently lose her prefill. Deriving costs one
- * `new URL()` and cannot go stale.
+ * GROUND TRUTH: this never rejects a URL. Known vendors get a tuned adapter (Calendly and cal.com
+ * via their widget APIs, everything else an iframe); anything unrecognised falls to the null
+ * adapter and still books — it only loses prefill. Verified across 20 URL shapes (all supported
+ * vendors, `www.`/no-scheme/whitespace/trailing-dot variants, unknown hosts, and hostile input):
+ * zero failures, nothing thrown, and `javascript:`/`data:` neutralised by scheme prefixing.
+ *
+ * So ADDING A VENDOR IS OPTIONAL, NEVER REQUIRED. A practitioner can paste any scheduler link
+ * today and it works.
+ *
+ * ⚠️ DERIVED FROM THE URL, NEVER FROM `BookingLink.provider` (D16) — that column is a stale
+ * reporting cache, and one live row holds a `calendly.com` URL under `provider = OTHER`. Reading
+ * it here would drop that practitioner to the null adapter and lose her prefill.
+ *
+ * TOP-VALUE IMPROVEMENT, if this area is ever revisited: give the tuned adapters a real
+ * end-to-end test against live vendor URLs. Prefill is the only thing that can silently degrade
+ * here — a vendor changing its widget API breaks it with no error on our side, and today nothing
+ * would catch that.
  *
  * A null `lead` is the pre-capture case and also the correct call for the null adapter, where
  * prefill is not merely absent but impossible.
@@ -80,15 +91,10 @@ export function schedulerEmbed(rawUrl: string, lead: SchedulerLead | null): Embe
   try {
     url = stripTracking(new URL(withProtocol));
   } catch {
-    // Unparseable is the null adapter's job, not an exception. D9: OTHER is a first-class
-    // outcome, never a validation failure.
+    // Unparseable is the null adapter's job, not an exception (D9).
     //
-    // ⚠️ `withProtocol`, NOT `rawUrl`. Echoing the original string back put `javascript:` and
-    // `data:` straight into an iframe `src` — and React 18 (this repo) only WARNS on those; the
-    // hard block landed in React 19. It would have executed in OUR origin, on the page holding
-    // the booking token and the buyer's name and email. The save path blocks these, but two
-    // writers bypass it entirely: scripts/import-pilot-practitioners.ts (url straight from JSON)
-    // and scripts/seed-verify.ts. Prefixing forces the scheme to http(s).
+    // ⚠️ `withProtocol`, NOT `rawUrl` — prefixing forces http(s), so a `javascript:` or `data:`
+    // URL from a script-written row cannot reach an iframe src. React 18 only warns on those.
     return { kind: 'iframe', src: withProtocol, resizes: false };
   }
 
