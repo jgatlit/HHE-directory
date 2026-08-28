@@ -18,6 +18,7 @@
 import { prisma } from './prisma';
 import { listedWhere } from './practitioner-indexer';
 import { SPECIALTY_ORDER } from './practitioner-ordering';
+import { buildSpecialtyLinks, type SpecialtyLink } from './specialty-graph';
 
 export type DirectorySpecialty = {
   slug: string;
@@ -56,6 +57,8 @@ export type DirectoryFacts = {
 export type Directory = {
   practitioners: DirectoryPractitioner[];
   specialties: DirectorySpecialty[];
+  /** Co-occurrence edges between `specialties`, for the specialty field. */
+  specialtyLinks: SpecialtyLink[];
   cities: DirectoryCity[];
   facts: DirectoryFacts;
 };
@@ -117,6 +120,14 @@ export async function getDirectory(): Promise<Directory> {
     (a, b) => b.count - a.count || a.name.localeCompare(b.name),
   );
 
+  // Derived from the SAME ACTIVE-only rule the index above applies, so an edge can never point
+  // at a node that was filtered out.
+  const specialtyLinks = buildSpecialtyLinks(
+    rows.map((p) =>
+      p.specialties.filter((ps) => ps.specialty.status === 'ACTIVE').map((ps) => ps.specialty.slug),
+    ),
+  );
+
   const byCity = new Map<string, DirectoryCity>();
   for (const p of rows) {
     if (!p.city) continue;
@@ -133,6 +144,7 @@ export async function getDirectory(): Promise<Directory> {
   return {
     practitioners,
     specialties,
+    specialtyLinks,
     cities,
     facts: { practitionerCount: practitioners.length, specialtyCount: specialties.length },
   };
