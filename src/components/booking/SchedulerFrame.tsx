@@ -171,34 +171,42 @@ export function SchedulerFrame({ schedulerUrl, practitionerName, lead }: Props) 
           // explicit no-referrer-when-downgrade would send the FULL url — which carries the intent
           // token, the credential for this flow — to the scheduler and its analytics.
           //
-          // NO `sandbox` ATTRIBUTE, DELIBERATELY (§7: "do not over-restrict sandbox").
+          // SANDBOXED, with every keyword a real scheduler needs.
           //
-          // It was removed 2026-08-27 after browser verification caught Acuity's own reCAPTCHA
-          // failing inside it:
-          //   "requestStorageAccess: Refused to execute request. The document is sandboxed, and
-          //    the 'allow-storage-access-by-user-activation' keyword is not set."
-          // That is the Storage Access API being denied in a third-party context. reCAPTCHA is on
-          // the submit path, so the visible symptom would have been bookings failing at the last
-          // step, on the provider holding most of our links — and looking exactly like a provider
-          // outage, which is the failure mode §7 names.
+          // ⚠️ THIS REPLACES A WRONG DECISION MADE EARLIER THE SAME DAY. The attribute was
+          // removed outright on the reasoning that "allow-scripts + allow-same-origin together
+          // restore the framed origin's normal privileges, so the containment was already
+          // nominal". THAT IS A MISREADING of MDN's warning, which applies only when the framed
+          // document is SAME-ORIGIN with the embedder — then it can reach the parent DOM and
+          // delete this attribute. Every scheduler here is CROSS-origin, so `allow-same-origin`
+          // grants the frame only its own origin. Sandbox flags are ORTHOGONAL to origin; it
+          // grants back none of them.
           //
-          // Storage access was not the only casualty. The old list also withheld `allow-modals`
-          // (schedulers use confirm dialogs) and `allow-downloads` (the "add to calendar" .ics a
-          // buyer gets after booking). Enumerating keywords means guessing what every current AND
-          // FUTURE provider needs, and being wrong silently — the same unwinnable game §6 refuses
-          // to play for per-provider intake fields.
+          // The trigger for the removal was Acuity's reCAPTCHA logging
+          //   "requestStorageAccess: Refused ... 'allow-storage-access-by-user-activation' is
+          //    not set."
+          // The browser error NAMED THE MISSING KEYWORD. The correct fix was to add that token,
+          // plus allow-modals (confirm dialogs) and allow-downloads (the post-booking .ics) —
+          // not to drop the attribute.
           //
-          // What we gave up: `allow-top-navigation` was previously withheld, so the frame could
-          // not replace our page. Accepted, because the containment was already largely nominal —
-          // `allow-scripts` + `allow-same-origin` together restore the framed origin's normal
-          // privileges — and because the frame is 100% practitioner-supplied content either way:
-          // anyone able to abuse top-navigation could equally render a fake payment form INSIDE
-          // the frame. Practitioners are invite-only and vetted (§18).
+          // What this withholds, and removal had granted: allow-top-navigation and its
+          // -by-user-activation / -to-custom-protocols variants, pointer lock, orientation lock,
+          // presentation. Top navigation is the one that matters: a buyer one step from a live
+          // payment form has necessarily clicked inside the frame (picking a time IS a click),
+          // so sticky activation is guaranteed and `top.location = …` would have been allowed.
+          // "A malicious practitioner could fake a payment form inside the frame anyway" answers
+          // phishing but not the uses with no in-frame equivalent — silently redirecting every
+          // buyer out of the flow, or launching a custom protocol handler. And "practitioners are
+          // vetted" does not cover the whole frame: sandbox flags are INHERITED by nested browsing
+          // contexts, and this frame loads Google reCAPTCHA and the provider's own analytics,
+          // which the practitioner did not choose.
           //
-          // What still protects the token: NO `referrerPolicy` override. The browser default is
-          // strict-origin-when-cross-origin, so the scheduler receives only our ORIGIN — never the
-          // full URL, which carries the booking token (the bearer credential for this flow). That
-          // guarantee is independent of sandbox and must not be weakened.
+          // ⚠️ RESIDUAL, stated so nobody re-removes this on a surprise: on a browser that does
+          // not implement `allow-storage-access-by-user-activation`, having ANY sandbox attribute
+          // re-breaks reCAPTCHA there, where no attribute never would. That is the one honest
+          // argument for the removed state. If that regresses, ADD the keyword the error names —
+          // do not delete the attribute again.
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-storage-access-by-user-activation allow-modals allow-downloads"
         />
       </div>
     );

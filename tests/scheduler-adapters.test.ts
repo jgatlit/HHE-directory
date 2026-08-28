@@ -158,3 +158,27 @@ describe('schedulerEmbed — input tolerance (§6)', () => {
     expect(url.searchParams.has('fbclid')).toBe(false);
   });
 });
+
+describe('the null adapter must not hand a dangerous scheme to an iframe src', () => {
+  // Found by security review of PR #97. The catch branch echoed the ORIGINAL string back as
+  // `src`, so an unparseable input reached the iframe verbatim. React 18 (this repo) only WARNS
+  // on `javascript:` in src — the hard block landed in React 19 — so it would have EXECUTED in
+  // our origin, on the page holding the booking token and the buyer's name and email.
+  //
+  // The /edit save path blocks these, but two writers bypass it entirely:
+  // scripts/import-pilot-practitioners.ts (url straight from a JSON file) and seed-verify.ts.
+  it('forces http(s) on anything unparseable, so no script-bearing scheme survives', () => {
+    for (const hostile of [
+      'javascript:alert(document.domain)',
+      'data:text/html,<script>alert(1)</script>',
+      'vbscript:msgbox(1)',
+      'blob:https://calendly.com/abc',
+      'not a url at all',
+    ]) {
+      const s = schedulerEmbed(hostile, { name: 'A B', email: 'a@b.com' });
+      const src = s.kind === 'iframe' ? s.src : s.kind === 'calendly' ? s.url : '';
+      expect(src.startsWith('https://') || src.startsWith('http://')).toBe(true);
+      expect(src.toLowerCase()).not.toMatch(/^javascript:|^data:|^vbscript:|^blob:/);
+    }
+  });
+});
