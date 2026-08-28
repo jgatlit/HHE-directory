@@ -211,6 +211,11 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 yearsInPractice={p.yearsInPractice}
                 chips={canonicalChips}
                 hheCertified={p.hheCertified}
+                framing={{
+                  photoFocalX: p.photoFocalX,
+                  photoFocalY: p.photoFocalY,
+                  photoZoom: p.photoZoom,
+                }}
               />
               <PractitionerCTAs
                 slug={p.slug}

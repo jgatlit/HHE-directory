@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import * as Sentry from '@sentry/nextjs';
 import type { Prisma } from '@prisma/client';
 import { auth } from '@/auth';
+import { normalizeFraming } from '@/lib/photo-framing';
 import { prisma } from '@/lib/prisma';
 import { sendEmail, normalizeEmail, escapeHtml } from '@/lib/email';
 import { SITE_URL } from '@/lib/site';
@@ -292,6 +293,15 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
   const resolvedCity = resolved;
   const cityId = resolvedCity?.id ?? null;
   const photoUrl = String(formData.get('photoUrl') ?? '').trim() || null;
+  // Framing is normalised, never trusted. These arrive as three free Floats from a hidden input,
+  // and an out-of-range value would reach the browser as `object-position: 137%`, which quietly
+  // renders as a blank edge rather than erroring — indistinguishable from "the photo is broken".
+  // normalizeFraming() clamps and falls back to dead-centre, i.e. exactly the pre-feature render.
+  const framing = normalizeFraming({
+    photoFocalX: Number(formData.get('photoFocalX')),
+    photoFocalY: Number(formData.get('photoFocalY')),
+    photoZoom: Number(formData.get('photoZoom')),
+  });
   const yearsRaw = String(formData.get('yearsInPractice') ?? '').trim();
   const yearsInPractice = yearsRaw === '' ? null : Math.max(0, parseInt(yearsRaw, 10) || 0);
 
@@ -379,6 +389,7 @@ export async function updatePractitioner(slug: string, formData: FormData): Prom
         displayName,
         bio: bio || null,
         photoUrl,
+        ...framing,
         headline,
         tagline,
         whoIHelp,

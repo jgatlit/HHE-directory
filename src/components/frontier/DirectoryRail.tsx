@@ -27,6 +27,7 @@ import { useReducedMotion } from '@/lib/use-reduced-motion';
 import { revealWhenVisible } from '@/lib/reveal';
 import type { DirectoryPractitioner } from '@/lib/directory';
 import { profileUrl } from '@/lib/search-url';
+import { framingStyle, normalizeFraming } from '@/lib/photo-framing';
 
 function initials(name: string) {
   return name
@@ -37,6 +38,10 @@ function initials(name: string) {
     .map((p) => p[0]?.toUpperCase() ?? '')
     .join('');
 }
+
+/** Framing for one card — normalised, so a bad row renders centred rather than blank. */
+const framingOf = (p: { photoFocalX: number; photoFocalY: number; photoZoom: number }) =>
+  normalizeFraming(p);
 
 export function DirectoryRail({ practitioners }: { practitioners: DirectoryPractitioner[] }) {
   const reduced = useReducedMotion();
@@ -102,7 +107,24 @@ export function DirectoryRail({ practitioners }: { practitioners: DirectoryPract
                       alt={`${p.displayName}, ${primary?.name ?? 'holistic health practitioner'}`}
                       fill
                       sizes="264px"
-                      className="object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                      /* ⚠️ ZOOM GOES THROUGH A CSS VARIABLE, NOT AN INLINE `transform`.
+                         This element already owns a hover transform, and an inline style BEATS a
+                         class — so `style={{ transform: scale(z) }}` would silently kill
+                         `group-hover:scale-[1.03]`. Composing through the variable keeps both:
+                         the practitioner's zoom is the resting scale, and hover multiplies it.
+
+                         ⚠️ Verifying this: Tailwind 4 emits the MODERN `scale` property, not a
+                         `transform`. So `getComputedStyle(el).transform` reads `none` here even
+                         when the zoom is applied — check `.scale` instead. Measured live: rest
+                         `scale: 2`, hover `scale: 2.06`, and `transition-property` resolves to
+                         `transform, translate, scale, rotate`, so it still animates. */
+                      style={
+                        {
+                          objectPosition: framingStyle(framingOf(p)).objectPosition,
+                          '--photo-zoom': String(framingOf(p).photoZoom),
+                        } as React.CSSProperties
+                      }
+                      className="scale-[var(--photo-zoom)] object-cover transition-transform duration-500 group-hover:scale-[calc(var(--photo-zoom)*1.03)]"
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center">
