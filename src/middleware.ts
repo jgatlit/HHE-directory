@@ -44,6 +44,14 @@ async function stampAttribution(req: NextRequest, res: NextResponse): Promise<Ne
     return res;
   }
 
+  // NEVER stamp on a booking-token path. `/practitioners/[slug]/book/[token]` carries an
+  // unauthenticated bearer credential that §10 emails to buyers. If a buyer's FIRST touch were a
+  // resume link from their inbox, that token would be baked into the cookie for 60 days and then
+  // copied into the `attribution` JSON of every BookingIntent they later create — including
+  // intents for OTHER practitioners. Skipping costs nothing: reaching this URL means they already
+  // have an intent, so attribution was resolved at their real first touch.
+  if (/^\/practitioners\/[^/]+\/book\//.test(req.nextUrl.pathname)) return res;
+
   try {
     const now = Date.now();
     const existing = await verifyAttribution(
@@ -52,6 +60,15 @@ async function stampAttribution(req: NextRequest, res: NextResponse): Promise<Ne
       now,
     );
     if (existing) return res; // First touch already held. Do not overwrite.
+
+    // A PRESENT cookie that failed to verify is the one case that silently rewrites commission
+    // basis: bad signature, tampering, an older payload format, or an AUTH_SECRET rotation (which
+    // also invalidates sessions, so the symptom reads as a session problem). Everyone mid-window
+    // gets re-resolved on their next visit. The unset-secret case below is already loud; this was
+    // not, which is precisely the blind spot this file's own comment warns about.
+    if (req.cookies.get(ATTRIBUTION_COOKIE)) {
+      console.warn('[attribution] present cookie failed to verify — first touch is being RESET');
+    }
 
     const attribution = resolveAttribution({
       pathname: req.nextUrl.pathname,

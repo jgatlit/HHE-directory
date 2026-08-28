@@ -69,11 +69,53 @@ describe('resolveAttribution — who earns the commission (§16)', () => {
     expect(viaUs.source).toBe('DIRECTORY');
   });
 
-  it('?ref= outranks campaign params — the flagged commercial edge case', () => {
-    // ⚠️ A practitioner running her OWN paid ad arrives with both. This asserts the CURRENT
-    // ruling (practitioner, 0%) so that changing it is a deliberate edit with a failing test,
-    // not a silent drift. The ruling itself is an operator call, not a technical one.
-    expect(resolve({ query: 'ref=sarah&utm_source=meta' }).party).toBe('PRACTITIONER');
+  // ── Operator ruling 2026-08-28, replacing the earlier D17 ────────────────────────────────
+  // "Practitioner attribution always links DIRECTLY to a practitioner profile. Organic search or
+  // links shared by NHP always attribute to NHP." The previous rule order gave `?ref=` absolute
+  // precedence on every path, which made a bare `?ref=` an unauthenticated commission waiver.
+  describe('operator ruling: organic and NHP-shared links always win', () => {
+    it('ORGANIC SEARCH beats ?ref= — it is always NHP', () => {
+      const a = resolve({ query: 'ref=sarah', referrer: 'https://www.google.com/search?q=x' });
+      expect(a.party).toBe('NHP');
+      expect(a.source).toBe('ORGANIC_SEARCH');
+    });
+
+    it('a campaign link beats ?ref= — NHP shared it, so it is NHP', () => {
+      expect(resolve({ query: 'ref=sarah&utm_source=meta' }).party).toBe('NHP');
+    });
+
+    it('?ref= on a NON-profile page is ignored — it is the directory, and ours', () => {
+      // THE DEFECT THIS FIXES: anyone could post naturalhealthpros.com/search?ref=1 and zero
+      // NHP's commission for every visitor through it, for 60 days, on ANY practitioner.
+      expect(resolve({ path: '/search', query: 'ref=1' }).party).toBe('NHP');
+      expect(resolve({ path: '/', query: 'ref=1' }).party).toBe('NHP');
+      expect(resolve({ path: '/practitioners', query: 'ref=1' }).party).toBe('NHP');
+    });
+
+    it('?ref= on the practitioner\'s OWN profile still credits her at 0%', () => {
+      const a = resolve({ path: '/practitioners/sarah-schindler', query: 'ref=sarah' });
+      expect(a.party).toBe('PRACTITIONER');
+      expect(a.source).toBe('REF_PARAM');
+    });
+
+    it('records the ref VALUE, so a waived commission names who claimed it', () => {
+      expect(resolve({ query: 'ref=sarah-schindler' }).ref).toBe('sarah-schindler');
+      expect(resolve({}).ref).toBeNull();
+    });
+
+    it('organic Google from ANY ccTLD is NHP, not just .com', () => {
+      for (const h of ['google.de','google.ca','google.fr','google.co.uk','google.com.au','google.co.in']) {
+        expect(resolve({ referrer: `https://www.${h}/search?q=x` }).party).toBe('NHP');
+      }
+      // and lookalikes must NOT match
+      for (const h of ['evilgoogle.com','google.com.attacker.io','notgoogle.de']) {
+        expect(resolve({ referrer: `https://${h}/x` }).party).toBe('PRACTITIONER');
+      }
+    });
+
+    it('caps landingPath so an oversized cookie is never silently dropped', () => {
+      expect(resolve({ path: '/' + 'a'.repeat(3000) }).landingPath.length).toBeLessThanOrEqual(200);
+    });
   });
 
   it('never throws on a malformed Referer — it runs on every request to the site', () => {
