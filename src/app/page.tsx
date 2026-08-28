@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Sparkles, ArrowRight } from 'lucide-react';
-import { PracticeFieldLazy, SpecialtyConstellationLazy } from '@/components/frontier/LazyFrontier';
+import { PracticeFieldLazy } from '@/components/frontier/LazyFrontier';
+import { SpecialtyField } from '@/components/frontier/SpecialtyField';
 import { GenerativeWash } from '@/components/frontier/GenerativeWash';
 import { SessionLoop } from '@/components/frontier/SessionLoop';
 import { DirectoryRail } from '@/components/frontier/DirectoryRail';
@@ -75,7 +76,7 @@ export default async function Home({
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   const forcedFailure = parseFailure(searchParams?.pipelineFailure);
-  const { practitioners, specialties, cities, facts } = await getDirectory();
+  const { practitioners, specialties, specialtyLinks, cities, facts } = await getDirectory();
 
   // Header identity — now shared, because the header is no longer homepage-only. The
   // signedIn/profileHref distinction that used to be explained here lives in siteIdentity().
@@ -248,10 +249,7 @@ export default async function Home({
                 — if it is on the field, someone listed today practises it.
               </p>
             </div>
-            <SpecialtyConstellationLazy
-              specialties={specialties}
-              forceFailure={only(forcedFailure, ['webgl-unavailable', 'webgl-context-lost'])}
-            />
+            <SpecialtyField specialties={specialties} links={specialtyLinks} />
           </div>
         </section>
 
