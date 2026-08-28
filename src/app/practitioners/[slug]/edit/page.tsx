@@ -28,6 +28,7 @@ import {
   requestAccountEmailChange,
 } from './actions';
 import { OfferingsEditor } from '@/components/practitioners/OfferingsEditor';
+import { resolveHeroLink, offeringsForLink, ctaLabelFor } from '@/lib/profile-ctas';
 import { SubscriptionSection } from '@/components/practitioners/SubscriptionSection';
 import { PaymentsSection } from '@/components/practitioners/PaymentsSection';
 import { AccountEmailSection } from '@/components/practitioners/AccountEmailSection';
@@ -222,6 +223,29 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const publishOfferingAction = publishOffering.bind(null, params.slug);
   const unpublishOfferingAction = unpublishOffering.bind(null, params.slug);
   const reorderOfferingsAction = reorderOffering.bind(null, params.slug);
+
+  // WHICH LINK BECOMES THE BIG ROSE BUTTON — computed with resolveHeroLink(), the SAME function
+  // the public profile uses, so the edit page cannot drift from what it is predicting. Telling a
+  // practitioner the wrong one is worse than telling them nothing.
+  const ctaLinks = practitioner.bookingLinks.map((b) => ({
+    id: b.id,
+    label: b.label,
+    url: b.url,
+    ctaLabel: b.ctaLabel,
+  }));
+  const ctaOfferingsForHint = practitioner.whopProducts.map((o) => ({
+    id: o.id,
+    title: o.title,
+    priceUsdCents: o.priceUsdCents,
+    duration: o.duration,
+    isConsult: o.isConsult,
+    bookingLinkId: o.bookingLinkId,
+    listingVisibility: o.listingVisibility,
+  }));
+  const heroLink = resolveHeroLink(ctaLinks, practitioner.primaryBookingLinkId ?? null);
+  const heroLabel = heroLink
+    ? ctaLabelFor(heroLink, offeringsForLink(ctaOfferingsForHint, heroLink.id))
+    : null;
   const startWhopOnboardingAction = startWhopOnboarding.bind(null, params.slug);
   const openPayoutPortalAction = openPayoutPortal.bind(null, params.slug);
   const startSubscriptionCheckoutAction = startSubscriptionCheckout.bind(null, params.slug);
@@ -662,51 +686,30 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
           priceLabel="$49/mo"
         />
 
-        {/* Booking links + Offerings side-by-side on wide screens, stacked on narrow ones —
-            cosmetic pairing of "how a client reaches you" with "what they can book" (queue item
-            7, 2026-08-25). Booking links physically renders here, NOT inside the profile form
-            above, even though its inputs still submit with that form: `form="profile-form"` on
-            each of BookingLinksField's inputs (see that component) is what makes an element
-            outside a `<form>`'s DOM subtree still part of its submission. Offerings can't move
-            the other direction (up next to the profile form) — each offering is its own <form>,
-            and BookingsSection above is deliberately ahead of both for time-sensitivity, a
-            separate ordering rule this doesn't touch. */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
-          <Card className="space-y-3 p-6 sm:p-8">
-            <div className="space-y-1">
-              <h2 className="text-sm font-semibold">Booking links</h2>
-              <p className="text-xs text-muted-foreground">
-                Your scheduling links (Cal.com, Calendly, SavvyCal, Acuity, etc.). Each appears as
-                its own button on your profile. Add an optional label per link (e.g. &lsquo;Free
-                15-min intro&rsquo;). Leave empty if you&apos;re not taking new bookings.
-              </p>
-            </div>
-            {/* The key is load-bearing. Saving soft-redirects to ?saved=1, which keeps this
-                subtree MOUNTED (same trap documented in UnsavedChangesBar) — so the field's lazy
-                useState initializer never re-runs and a row added in this page session would keep
-                dbId='' forever, being deleted and recreated on every later save. Keying on the
-                persisted ids remounts it exactly when that set changes, and deliberately NOT when
-                it hasn't: the invalid-URL redirect fires before the transaction, so a rejected
-                save leaves the key identical and the practitioner's typed input survives.
+        {/* OFFERINGS ABOVE BOOKING LINKS, STACKED FULL-WIDTH — operator ruling 2026-08-27,
+            reversing the side-by-side pairing added 2026-08-25 (queue item 7).
 
-                Accepted trade-off: when a save DOES change the id set, the remount reseeds from
-                the server, so a second row left half-filled (a label typed, URL still blank — the
-                server skips it) disappears. That is a visible row vanishing after an explicit
-                save, against a silent id churn that would sever every offering's scheduler link;
-                and showing exactly what was persisted is defensible on its own terms. Do not "fix"
-                it by dropping the key. */}
-            <BookingLinksField
-              key={practitioner.bookingLinks.map((b) => b.id).join(',')}
-              formId={PROFILE_FORM_ID}
-              initial={practitioner.bookingLinks.map((b) => ({
-                id: b.id,
-                label: b.label ?? '',
-                url: b.url,
-                ctaLabel: b.ctaLabel ?? '',
-              }))}
-            />
-          </Card>
+            Two complaints from the 08-26 Amy call, and this section answers both:
 
+            1. ORDER. Amy: "I'd almost move the offerings up to where booking links are, and just
+               use it as is." She reacts well to the offerings block and finds booking links
+               barren; leading with the weaker one sets the wrong expectation.
+            2. WIDTH. Jonathan, live on the call: the fields were "crushed side by side…
+               unmanageable this way." `lg:grid-cols-2` halved an editor whose rows already hold a
+               title, price, duration and a description textarea. Stacked, each gets the full
+               column.
+
+            The deeper goal is that the edit page VISUALLY PREDICTS the public profile, so a
+            practitioner can tell which link becomes the big rose button without Sarah explaining
+            it — which she currently has to do for every person she onboards.
+
+            Booking links still physically renders HERE, not inside the profile form above, even
+            though its inputs submit with that form: `form="profile-form"` on each of
+            BookingLinksField's inputs is what makes an element outside a `<form>`'s DOM subtree
+            part of its submission. Offerings can't move up next to the profile form either —
+            each offering is its own <form>. BookingsSection stays ahead of both for
+            time-sensitivity, a separate ordering rule this does not touch. */}
+        <div className="space-y-4">
           <OfferingsEditor
             offerings={practitioner.whopProducts.map((o) => ({
               id: o.id,
@@ -739,6 +742,62 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
             unpublishAction={unpublishOfferingAction}
             reorderAction={reorderOfferingsAction}
           />
+
+          <Card className="space-y-3 p-6 sm:p-8">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">Booking links</h2>
+              <p className="text-xs text-muted-foreground">
+                Your scheduling links (Cal.com, Calendly, SavvyCal, Acuity, etc.). Each appears as
+                its own button on your profile. Add an optional label per link (e.g. &lsquo;Free
+                15-min intro&rsquo;). Leave empty if you&apos;re not taking new bookings.
+              </p>
+              {/* §12: "a practitioner must be able to tell from the edit screen which link becomes
+                  the primary CTA". Sarah currently explains this verbally to every person she
+                  onboards. Three states, matching resolveHeroLink exactly — including the
+                  suppression case, which is the one nobody expects. */}
+              {heroLink ? (
+                <p className="rounded-md border border-cta/30 bg-cta/5 px-3 py-2 text-xs">
+                  <span className="font-medium">On your profile the big button reads</span>{' '}
+                  &ldquo;{heroLabel}&rdquo;{' '}
+                  <span className="text-muted-foreground">
+                    and opens{' '}
+                    {heroLink.label?.trim() ? `“${heroLink.label.trim()}”` : 'your only link'}.
+                  </span>
+                </p>
+              ) : ctaLinks.length > 1 ? (
+                <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">No primary button yet.</span> With
+                  several links and none chosen as primary, your profile leads with your offerings
+                  instead — pointing the big button at one arbitrary calendar would misrepresent
+                  your practice.
+                </p>
+              ) : null}
+            </div>
+            {/* The key is load-bearing. Saving soft-redirects to ?saved=1, which keeps this
+                subtree MOUNTED (same trap documented in UnsavedChangesBar) — so the field's lazy
+                useState initializer never re-runs and a row added in this page session would keep
+                dbId='' forever, being deleted and recreated on every later save. Keying on the
+                persisted ids remounts it exactly when that set changes, and deliberately NOT when
+                it hasn't: the invalid-URL redirect fires before the transaction, so a rejected
+                save leaves the key identical and the practitioner's typed input survives.
+
+                Accepted trade-off: when a save DOES change the id set, the remount reseeds from
+                the server, so a second row left half-filled (a label typed, URL still blank — the
+                server skips it) disappears. That is a visible row vanishing after an explicit
+                save, against a silent id churn that would sever every offering's scheduler link;
+                and showing exactly what was persisted is defensible on its own terms. Do not "fix"
+                it by dropping the key. */}
+            <BookingLinksField
+              key={practitioner.bookingLinks.map((b) => b.id).join(',')}
+              formId={PROFILE_FORM_ID}
+              initial={practitioner.bookingLinks.map((b) => ({
+                id: b.id,
+                label: b.label ?? '',
+                url: b.url,
+                ctaLabel: b.ctaLabel ?? '',
+              }))}
+            />
+          </Card>
         </div>
 
         <PaymentsSection
