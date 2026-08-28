@@ -166,41 +166,16 @@ export function SchedulerStep({
           // an explicit no-referrer-when-downgrade would send the FULL url — including the intent
           // id, which is the credential for this flow — to the scheduler and its analytics.
           //
-          // SANDBOXED, with every keyword a real scheduler needs.
+          // Sandboxed. Every keyword here is one a real scheduler needs: forms and modals to
+          // book, popups (+escape) for provider OAuth, downloads for the post-booking .ics, and
+          // storage-access for the reCAPTCHA some providers run. `allow-same-origin` grants the
+          // frame only its OWN origin — every scheduler is cross-origin, and sandbox flags are
+          // orthogonal to origin, so it hands back nothing.
           //
-          // ⚠️ THIS REPLACES A WRONG DECISION MADE EARLIER THE SAME DAY. The attribute was
-          // removed outright on the reasoning that "allow-scripts + allow-same-origin together
-          // restore the framed origin's normal privileges, so the containment was already
-          // nominal". THAT IS A MISREADING of MDN's warning, which applies only when the framed
-          // document is SAME-ORIGIN with the embedder — then it can reach the parent DOM and
-          // delete this attribute. Every scheduler here is CROSS-origin, so `allow-same-origin`
-          // grants the frame only its own origin. Sandbox flags are ORTHOGONAL to origin; it
-          // grants back none of them.
-          //
-          // The trigger for the removal was Acuity's reCAPTCHA logging
-          //   "requestStorageAccess: Refused ... 'allow-storage-access-by-user-activation' is
-          //    not set."
-          // The browser error NAMED THE MISSING KEYWORD. The correct fix was to add that token,
-          // plus allow-modals (confirm dialogs) and allow-downloads (the post-booking .ics) —
-          // not to drop the attribute.
-          //
-          // What this withholds, and removal had granted: allow-top-navigation and its
-          // -by-user-activation / -to-custom-protocols variants, pointer lock, orientation lock,
-          // presentation. Top navigation is the one that matters: a buyer one step from a live
-          // payment form has necessarily clicked inside the frame (picking a time IS a click),
-          // so sticky activation is guaranteed and `top.location = …` would have been allowed.
-          // "A malicious practitioner could fake a payment form inside the frame anyway" answers
-          // phishing but not the uses with no in-frame equivalent — silently redirecting every
-          // buyer out of the flow, or launching a custom protocol handler. And "practitioners are
-          // vetted" does not cover the whole frame: sandbox flags are INHERITED by nested browsing
-          // contexts, and this frame loads Google reCAPTCHA and the provider's own analytics,
-          // which the practitioner did not choose.
-          //
-          // ⚠️ RESIDUAL, stated so nobody re-removes this on a surprise: on a browser that does
-          // not implement `allow-storage-access-by-user-activation`, having ANY sandbox attribute
-          // re-breaks reCAPTCHA there, where no attribute never would. That is the one honest
-          // argument for the removed state. If that regresses, ADD the keyword the error names —
-          // do not delete the attribute again.
+          // ⚠️ IF A PROVIDER BREAKS, ADD THE KEYWORD THE BROWSER ERROR NAMES. Do not delete the
+          // attribute: it is what withholds top-navigation, which would let a framed page
+          // redirect the buyer out of checkout. Flags are inherited by nested frames, so this
+          // also covers the analytics and captcha the practitioner never chose.
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-storage-access-by-user-activation allow-modals allow-downloads"
         />
       </div>

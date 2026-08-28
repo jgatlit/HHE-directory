@@ -132,13 +132,8 @@ const BOOKING_HOSTS = [
   'koalendar.com',
   'youcanbookme.com',
   'acuityscheduling.com',
-  // Acuity's share dialog hands out `as.me` short links. Listed for completeness and to keep this
-  // in sync with src/lib/booking-providers.ts — NOT because they were previously rejected: an
-  // earlier note here claimed they were, and that was wrong. normalizeUrl only rejects a host
-  // with no dot at all (see `!knownish && !host.includes('.')`), so every dotted host has always
-  // passed and this list has never been a true allowlist. Practitioners bring their own
-  // scheduler, so an open host policy is intended — §6's null adapter is what handles the
-  // unknown ones. Do not read this array as a security boundary.
+  // Advisory, NOT an allowlist: normalizeUrl accepts any dotted host. Practitioners bring their
+  // own scheduler and the null adapter handles whatever is not listed here.
   'as.me',
 ];
 
