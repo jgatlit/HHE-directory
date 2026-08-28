@@ -234,6 +234,28 @@ export async function startBookingIntent(
       })
     : null;
 
+  // 🚨 THE TOKEN MUST STAY A PATH SEGMENT. NEVER A QUERY PARAMETER.
+  //
+  // This is a real security boundary that currently looks like a formatting choice, which is why
+  // it is written down here and asserted in tests/booking-token-path.test.ts.
+  //
+  // `/book/[token]` loads THIRD-PARTY SCHEDULER SCRIPTS INTO OUR OWN DOCUMENT (SchedulerFrame's
+  // loadScript → assets.calendly.com, app.cal.com). They therefore execute with our origin's
+  // privileges on a page that holds this token — an unauthenticated bearer credential §10 emails
+  // to buyers — plus the buyer's name and email sitting in the capture form's DOM.
+  //
+  // Both vendor scripts were fetched and read rather than assumed. Neither reads the PATH. Both
+  // read the QUERY STRING: Calendly's widget.js harvests it (filtered to a utm_* allowlist) and
+  // cal.com's embed.js reads window.location.search with forwardQueryParams defaulting to false.
+  // So the only thing keeping this token out of a vendor's hands is that it is not in the query
+  // string — an accident of URL shape, not a control. Moving it to `?token=` for any reason,
+  // including a seemingly harmless refactor, would hand it over silently and with no error.
+  //
+  // There is no CSP directive standing behind this either: the vendor-allowlist CSP was
+  // deliberately rejected (tsk_ead0934c, operator ruling 2026-08-28 — trust the practitioner's
+  // vendor), so `connect-src` is `https:` and does not bound where a vendor script may send it.
+  // This comment and its test are the whole of the protection.
+  //
   // The token in the URL is what makes returning IDEMPOTENT — the T3 new-tab fallback and §10's
   // resume link both depend on it (§5, §8 failure table). A random token rather than the row's id,
   // because this URL is an unauthenticated bearer credential that §10 puts into inboxes.

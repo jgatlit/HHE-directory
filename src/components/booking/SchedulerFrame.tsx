@@ -22,6 +22,32 @@ const SCRIPTS = {
  * Keyed on src so a remount (React strict mode, a re-render, a second booking in one session)
  * reuses the tag instead of appending duplicates — which for Acuity is not merely wasteful:
  * `embed.js` BREAKS when more than one of its widgets is initialised on a page.
+ *
+ * ── SUBRESOURCE INTEGRITY: CONSIDERED AND DECLINED (tsk_ead0934c e3, 2026-08-28) ──────────────
+ *
+ * These tags carry no `integrity` attribute, and that is a decision rather than an oversight.
+ *
+ * SRI pins a hash of the exact bytes. Calendly's `widget.js` and cal.com's `embed.js` are
+ * evergreen widget scripts that the vendors rewrite on THEIR release cadence, with no version in
+ * the URL and no notice to us. A pinned hash therefore does not fail on the day someone tampers
+ * with a script — it fails on the day the vendor ships a routine update. That failure is total
+ * and silent from our side: the browser refuses the script, `loadScript` rejects, and EVERY
+ * practitioner on that provider stops being bookable at once, with the first signal being a
+ * practitioner telling us nobody can book. Trading a certain, recurring, revenue-stopping outage
+ * for a speculative tamper-detection is the wrong side of that bet.
+ *
+ * It also contradicts the operator ruling of 2026-08-28 on the same task — "trust the
+ * Practitioner's vendor, and ensure seamless UX flow & operation" — which is why the
+ * vendor-allowlist CSP was rejected too. SRI is the same bet one layer down.
+ *
+ * WHAT WE RELY ON INSTEAD, stated plainly so nobody mistakes this for coverage we do not have:
+ * the vendors' own integrity, and the fact that the booking token stays a PATH segment where
+ * neither script reads (see book/actions.ts + tests/booking-token-path.test.ts). We are NOT
+ * bounding what a compromised vendor script could exfiltrate; `connect-src` is `https:`.
+ *
+ * WHEN TO REVISIT: if a vendor ever publishes a VERSIONED, immutable script URL, SRI becomes free
+ * of the outage risk and should be adopted for that vendor. The blocker is the evergreen URL, not
+ * the mechanism.
  */
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {

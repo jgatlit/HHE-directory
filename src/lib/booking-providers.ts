@@ -1,6 +1,24 @@
 import type { BookingProvider } from '@prisma/client';
 
 /**
+ * ⚠️ THIS ONE *IS* A SECURITY BOUNDARY — unlike its near-twin.
+ *
+ * `BOOKING_HOSTS` in app/practitioners/[slug]/edit/actions.ts is a sibling list of the same
+ * scheduler domains, and its own comment says in as many words: "Do not read this array as a
+ * security boundary." That is correct for THAT list — it is advisory, `normalizeUrl` only rejects
+ * hosts with no dot, and an open host policy is intended because practitioners bring their own
+ * scheduler.
+ *
+ * The two are not interchangeable. What this map returns decides which ADAPTER runs, and the
+ * cal.com adapter passes `url.origin` into cal.com's `Cal('init', { origin })`
+ * (src/lib/scheduler-adapters.ts) — i.e. a value derived from practitioner-supplied input is
+ * handed to a third-party script as a trusted origin. Widening this map, or making it match on
+ * something looser than an exact hostname, changes what we will treat as cal.com.
+ *
+ * Not exploitable today: cal.com's own DNS sits behind the hosts listed here. The hazard is a
+ * future reader applying the sibling's "not a security boundary" model to this file because the
+ * two look alike. They do not have the same job.
+ *
  * Hostname → provider, per spec §6. The practitioner supplies a URL and never embed code, so this
  * is the ONLY per-practitioner input and every downstream mechanism (embed strategy, prefill
  * params, completion listener, resize) is derived from what this returns.
