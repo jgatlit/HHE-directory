@@ -126,15 +126,37 @@ export function PaymentsSection({
     description =
       'Your payout account is active — you can take payments and publish offerings to patients.';
     cta = (
-      <form action={openPayoutPortalAction}>
-        <PendingButton
-          ariaLabel={`Manage payouts for ${slug}`}
-          pendingLabel="Opening payout portal…"
-          className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md border bg-card text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+      <div className="space-y-2">
+        <form action={openPayoutPortalAction}>
+          <PendingButton
+            ariaLabel={`Manage payouts for ${slug}`}
+            pendingLabel="Opening payout portal…"
+            className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md border bg-card text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+          >
+            Manage payouts
+          </PendingButton>
+        </form>
+        {/* Whop's accountLinks API only mints scoped links for `account_onboarding` and
+            `payouts_portal` — there is no scoped use_case for the general account settings a
+            practitioner actually needs here (tax collection, payment methods, statement
+            descriptor). Confirmed live on the 2026-09-03 call: Jonathan had to navigate to
+            whop.com directly to demo tax settings; Sarah's own "Manage payouts" link showed only
+            withdraw/bank-account options. So this is a plain external link to Whop's own login,
+            not an auto-authenticated deep link — labelled honestly rather than implying the same
+            one-click handoff "Manage payouts" gives. */}
+        <a
+          href="https://whop.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md border border-dashed bg-card text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
-          Manage payouts
-        </PendingButton>
-      </form>
+          Manage your Whop account
+        </a>
+        <p className="text-[11px] text-muted-foreground">
+          Tax settings, payment methods, and more — opens whop.com directly, sign in with your own
+          Whop login.
+        </p>
+      </div>
     );
   }
 
