@@ -112,6 +112,7 @@ Authoritative source documents kept in the operator's vault / Downloads (vault i
 - **Holistic Health Educators company entity**: `~/vault/300 Entities/Companies/Holistic Health Educators.md`
 - **Project-side memory** (auto-loaded by Claude at this cwd): `~/.claude/projects/-home-jgatlit-projects-HHE-HHE-directory/memory/MEMORY.md` indexes 4 topic files — CSS bootstrap, seed strategy, Typesense/InstantSearch gotchas, Vercel env provisioning
 - **Vault-side memory pointers**: `reference_practicenear_repo_topology` (broad context) + `reference_neon_vercel_prisma_integration` (deployment gotchas)
+- **2026-09-03 call primer**: [`primers/2026-09-03 HHE Amy Sarah Jonathan - Booking Flow Live Walkthrough + Practitioner Launch Plan - Primer.md`](primers/2026-09-03%20HHE%20Amy%20Sarah%20Jonathan%20-%20Booking%20Flow%20Live%20Walkthrough%20+%20Practitioner%20Launch%20Plan%20-%20Primer.md) — full call notes, validated action items, and the still-open "two pink buttons" bug ahead of the 2026-09-04 practitioner launch
 
 ## Working agreements with the operator
 
