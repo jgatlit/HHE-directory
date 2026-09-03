@@ -1,3 +1,5 @@
+import { offeringAnchorId } from '@/components/practitioners/OfferingsSummaryRail';
+
 export type CtaOffering = {
   id: string;
   title: string;
@@ -119,12 +121,26 @@ export function offeringTarget(slug: string, offering: CtaOffering): string {
 }
 
 /**
- * A chooser option's destination. Extracted because both chooser render paths were building this
- * literal by hand — the only untested URL construction in the feature, and the two places most
- * likely to drift from the helpers when a query param is added.
+ * A chooser option's destination (§22).
+ *
+ * A LISTED offering has a full card in the right column — route there (same anchor the rail
+ * uses) so a genuinely undecided buyer reads the description before committing, instead of the
+ * chooser silently duplicating the rail's old direct-to-flow shortcut. A LINK_ONLY offering (the
+ * unlisted free consult, §4/D3) has no card anywhere on the page — the chooser is its only route,
+ * so it must still go straight into the flow; there is nothing to reveal.
+ *
+ * Extracted because both chooser render paths were building this by hand — the only untested URL
+ * construction in the feature, and the two places most likely to drift from the helpers.
  */
-export function chooserOptionTarget(slug: string, linkId: string, offeringId: string): string {
-  const params = new URLSearchParams({ link: linkId, offering: offeringId });
+export function chooserOptionTarget(
+  slug: string,
+  linkId: string,
+  offering: Pick<CtaOffering, 'id' | 'listingVisibility'>,
+): string {
+  if (offering.listingVisibility === 'LISTED') {
+    return `#${offeringAnchorId(offering.id)}`;
+  }
+  const params = new URLSearchParams({ link: linkId, offering: offering.id });
   return `/practitioners/${encodeURIComponent(slug)}/book?${params}`;
 }
 
@@ -159,23 +175,52 @@ export function linkPriceHint(linked: CtaOffering[]): {
 }
 
 /**
- * Offering ids ALREADY fully displayed by a Booking Link entry in the rail.
+ * Offering ids ALREADY fully displayed by a Booking Link entry — the "single, unambiguous pair"
+ * case, which now needs no second surface anywhere on the page (§22).
  *
  * A link with exactly ONE linked Offering renders that Offering's title, price and duration on its
- * own row (see `linkPriceHint`), so repeating it in the Offerings rail below prints the same list
- * twice in the same column.
+ * own row (see `linkPriceHint`); repeating it anywhere else prints the same thing twice.
  *
  * ⚠️ THIS IS TOPOLOGY-DEPENDENT, which is why it was missed until real data was rendered (§14.1):
  *   - CATCH-ALL (1 link → N offerings): the link shows a price RANGE and names nothing, so every
- *     offering still needs the rail. Nothing is suppressed.
- *   - PURPOSE-BUILT (N links → 1 offering each): every link row already IS its offering, so the
- *     rail would duplicate all of them. Sarah Schindler's live profile is this shape — 4 links, 3
- *     of them carrying a specific `offering=` — and it rendered the same three titles and prices
- *     twice, ~40px apart.
+ *     offering still needs its own right-column card. Nothing is suppressed.
+ *   - PURPOSE-BUILT (N links → 1 offering each): every link row already IS its offering, so a
+ *     second surface would duplicate all of them. Sarah Schindler's live profile is this shape —
+ *     4 links, 3 of them carrying a specific `offering=`.
  *
  * A link with 0 linked Offerings (the typical free consult, §3 shape A) surfaces nothing and
  * suppresses nothing.
+ *
+ * CONSUMERS, both in `page.tsx` (§22 — this did NOT become dead code once the right column
+ * stopped rendering a permanent full list, it became the thing that decides what's IN that
+ * shorter list): the right-column card set (a suppressed id gets no card at all — its Booking
+ * Link row already said everything a card would), and in turn the left-pane rail (rail items are
+ * a subset of the card set — standalone Offerings only, since catch-all-linked ones now reach
+ * their card via the chooser instead).
  */
+/**
+ * §22 edit-page nudge: does this Booking Link's own label name an Offering that exists on the
+ * account but is not attached to it? Returns the matching title, or null.
+ *
+ * Exact match only (case-insensitive, trimmed) — this is an admin-only advisory signal, and a
+ * fuzzy match risks false positives that would make it noise a practitioner learns to ignore.
+ * Real case this was written for: Amy Sprouse's Offering "3 Month Health Transformation" sat
+ * attached to her "1 Month of Support" Booking Link, while a link of the identical name sat empty
+ * — invisible on the edit page until this existed.
+ */
+export function unattachedNameMatch(
+  linkLabel: string,
+  attachedTitles: string[],
+  allOfferingTitles: string[],
+): string | null {
+  const label = linkLabel.trim().toLowerCase();
+  if (!label) return null;
+  const match = allOfferingTitles.find((t) => t.trim().toLowerCase() === label);
+  if (!match) return null;
+  const alreadyAttached = attachedTitles.some((t) => t.trim().toLowerCase() === label);
+  return alreadyAttached ? null : match;
+}
+
 export function offeringsSurfacedByLinks(
   links: CtaBookingLink[],
   offerings: CtaOffering[],

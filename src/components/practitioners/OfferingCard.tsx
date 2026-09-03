@@ -13,12 +13,13 @@ type Props = {
   href: string | null;
   /** §9 payments_live — changes the action wording only, never whether the card expands. */
   canTransact: boolean;
-  /** DOM id the left-pane rail anchors to. Omitted where the card is not rail-addressable. */
+  /** DOM id the left pane anchors to — the rail (standalone Offerings) or the chooser
+   *  (catch-all-linked Offerings, §22). Omitted where the card is not addressable at all. */
   anchorId?: string;
   /**
-   * True when the left-pane OfferingsSummaryRail is also rendering this offering. Moves the
-   * price/duration line from this card's SUMMARY into its expanded DETAIL, so the two panes read
-   * as menu -> detail instead of showing the same list twice.
+   * True when something in the left pane ALSO states this offering's price/duration — the rail
+   * (standalone) or the chooser (catch-all-linked, §22). Moves that line from this card's SUMMARY
+   * into its expanded DETAIL, so the two read as menu -> detail instead of the same list twice.
    */
   railed?: boolean;
 };

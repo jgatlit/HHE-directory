@@ -20,6 +20,9 @@ type Props = {
   bookingLinkId: string | null;
   offeringId: string | null;
   subject: string | null;
+  /** §22: the selected Offering's own description, when it has one. Never a fallback string —
+      omitted entirely rather than restating the title or label. */
+  subjectDescription: string | null;
   start: (formData: FormData) => Promise<StartBookingResult>;
   advance: (slug: string, token: string, signal: string) => Promise<{ ok: boolean }>;
 };
@@ -53,6 +56,7 @@ export function BookingCaptureFlow({
   bookingLinkId,
   offeringId,
   subject,
+  subjectDescription,
   start,
   advance,
 }: Props) {
@@ -161,6 +165,20 @@ export function BookingCaptureFlow({
             <p className="text-xs text-muted-foreground">
               {subject ? `${subject} — just your name and email to see live availability.` : 'Just your name and email to see live availability.'}
             </p>
+            {/* §22: closes Amy Sprouse's direct ask — "possible to add offer descriptions to
+                booking area? (first place they will see/read it)". Same treatment as
+                OfferingCard's own description: split on blank lines, not a raw text block. */}
+            {subjectDescription && (
+              <div className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+                {subjectDescription
+                  .split(/\n{2,}/)
+                  .map((para) => para.trim())
+                  .filter(Boolean)
+                  .map((para, i) => (
+                    <p key={i}>{para}</p>
+                  ))}
+              </div>
+            )}
           </div>
 
           {error && (

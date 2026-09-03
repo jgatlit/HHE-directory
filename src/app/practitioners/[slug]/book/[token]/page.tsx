@@ -58,6 +58,7 @@ export default async function BookingFlowPage({ params }: Props) {
         select: {
           id: true,
           title: true,
+          description: true,
           archived: true,
           acceptsPayments: true,
           whopPlanId: true,
@@ -204,6 +205,19 @@ export default async function BookingFlowPage({ params }: Props) {
             <p className="text-xs text-muted-foreground">
               {offering?.title ?? intent.bookingLink?.label ?? 'Booking'}
             </p>
+            {/* §22: same description shown pre-capture on /book — carried through so the buyer
+                still sees it after submitting, not just before. */}
+            {offering?.description && (
+              <div className="space-y-1.5 pt-1 text-xs leading-relaxed text-muted-foreground">
+                {offering.description
+                  .split(/\n{2,}/)
+                  .map((para) => para.trim())
+                  .filter(Boolean)
+                  .map((para, i) => (
+                    <p key={i}>{para}</p>
+                  ))}
+              </div>
+            )}
           </div>
         </div>
 
