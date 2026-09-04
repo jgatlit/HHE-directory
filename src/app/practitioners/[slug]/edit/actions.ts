@@ -1284,6 +1284,13 @@ export async function publishOffering(slug: string, formData: FormData): Promise
         whopCheckoutConfigId: result.checkoutConfigId,
         whopPlanId: result.planId,
         purchaseUrl: result.purchaseUrl,
+        // §22-B: Publish IS "set up payments" now — a separate manual "Accept payments" tick
+        // was the exact trap Sarah and Jonathan hit live on the 2026-09-03 call (checked the
+        // box, saved, nothing was purchasable, because Publish is the step that actually calls
+        // Whop). The checkbox stays editable afterward, for pausing checkout on a published
+        // item without unpublishing it — this only removes the now-pointless manual tick
+        // BEFORE anything exists to toggle.
+        acceptsPayments: true,
       },
     });
 

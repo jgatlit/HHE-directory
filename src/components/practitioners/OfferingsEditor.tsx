@@ -118,8 +118,8 @@ export function OfferingsEditor({
         <h2 className="text-sm font-semibold">Offerings</h2>
         <p className="text-xs text-muted-foreground">
           Consultations, sessions, packages, products, subscriptions — name them and set your own
-          prices. They show on your profile now; publish any offering to turn on online checkout,
-          or leave it unpublished and clients still reach you via your booking link.
+          prices. They show on your profile now; set up payments on any offering to turn on online
+          checkout, or leave it as-is and clients still reach you via your booking link.
         </p>
       </div>
 
@@ -164,7 +164,6 @@ export function OfferingsEditor({
                   idPrefix={o.id}
                   bookingLinks={bookingLinks}
                   whopConnected={whopConnected}
-                  payoutsEnabled={payoutsEnabled}
                 />
                 <PublishRow
                   offering={o}
@@ -212,7 +211,6 @@ export function OfferingsEditor({
           idPrefix="new"
           bookingLinks={bookingLinks}
           whopConnected={whopConnected}
-          payoutsEnabled={payoutsEnabled}
         />
         <div className="flex justify-end">
           <button
@@ -267,15 +265,19 @@ function PublishRow({
   if (payoutsEnabled) {
     return (
       <div className="flex items-center justify-between gap-3 border-t pt-3">
-        <p className="text-xs text-muted-foreground">Not published — only you can see this.</p>
+        {/* §22-B: "Publish" read as jargon and, worse, as a SEPARATE step from "Accept
+            payments" above — a practitioner could tick that checkbox, hit Save, and still have
+            nothing purchasable, because this is the button that actually calls Whop. Renamed to
+            say what it does; it also now turns Accept payments on by itself (actions.ts). */}
+        <p className="text-xs text-muted-foreground">Not set up yet — only you can see this.</p>
         <PendingButton
           intent="publish"
           formAction={publishAction}
           formNoValidate
-          pendingLabel="Publishing…"
+          pendingLabel="Setting up…"
           className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
         >
-          Publish
+          Set up payments
         </PendingButton>
       </div>
     );
