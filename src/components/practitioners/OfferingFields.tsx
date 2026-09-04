@@ -55,20 +55,23 @@ export function OfferingFields({
   idPrefix,
   bookingLinks,
   whopConnected,
-  payoutsEnabled,
 }: {
   offering: OfferingFormValues | null;
   idPrefix: string;
   bookingLinks: BookingLinkOption[];
   /**
-   * §9 — the checkbox is gated on being CONNECTED, not on payouts being live. While Whop is still
-   * verifying, the practitioner may tick it and capability flips on by itself. That is the whole
-   * "onboarding gap solved as a side effect": build the listing early, tick the boxes, and every
-   * ticked Offering goes live automatically on verification with no re-editing.
+   * §22-B — the checkbox is gated on the offering ALREADY having a live Whop plan (published at
+   * least once), not on being connected. Before that, ticking it did nothing purchasable —
+   * Publish is the step that actually calls Whop — which is exactly the trap Sarah and Jonathan
+   * hit live on the 2026-09-03 call. Publish now sets `acceptsPayments: true` itself, so there is
+   * nothing left to pre-tick.
+   *
+   * Once an offering HAS been published, the checkbox stays interactive regardless of the
+   * practitioner's current payout status — that is what preserves the one case pre-ticking still
+   * matters for: a temporarily restricted Whop account (`whopPayoutsEnabled` flips false without
+   * `whopPlanId` being cleared) resumes automatically when the restriction lifts, no re-editing.
    */
   whopConnected: boolean;
-  /** Payouts actually live. Affects the EXPLANATION, never whether the box can be ticked. */
-  payoutsEnabled: boolean;
 }) {
   const [isConsult, setIsConsult] = useState(offering?.isConsult ?? false);
   const [acceptsPayments, setAcceptsPayments] = useState(offering?.acceptsPayments ?? false);
@@ -78,9 +81,13 @@ export function OfferingFields({
   );
 
   // D2 — a free consultation is an Offering with price 0 and no Whop plan. Payment is not
-  // "unavailable" for it, it is meaningless. That is the ONLY case that forces the value false;
-  // "not connected yet" merely prevents EDITING it.
-  const paymentsLocked = isConsult || !whopConnected;
+  // "unavailable" for it, it is meaningless. That is the ONLY case that forces the value false.
+  // §22-B — everything else stays locked until the offering has actually been published: before
+  // that there is no Whop plan for the flag to gate, so a tick is a promise with nothing behind
+  // it. `unpublishOffering` nulls `whopPlanId`, which correctly re-locks this along with the rest
+  // of "not published" state — Unpublish and "never published" read identically here on purpose.
+  const notYetPublished = !offering?.whopPlanId;
+  const paymentsLocked = isConsult || !whopConnected || notYetPublished;
   // Show the STORED bit. Masking it with capability made the row lie about its own state, and —
   // because the disabled mirror was then fed the masked value — every save silently rewrote a
   // stored `true` to false. The bit is intent; only isConsult may overwrite intent.
@@ -208,14 +215,13 @@ export function OfferingFields({
           <span className={paymentsLocked ? 'opacity-60' : undefined}>
             <span className="font-medium">Accept payments</span>
             <span className="block text-muted-foreground">
-              To accept payments here for bookings and purchases through your profile.
-              {!isConsult && !whopConnected && (
+              {!isConsult && !whopConnected ? (
                 <>
-                  {' '}
                   {/* A greyed checkbox with no path out is a dead end for the least technical
                       cohort — the tooltip must LINK to the connection flow, not merely explain
                       the disablement (§12). A BARE FRAGMENT, not an absolute path: this page IS
                       that URL, so a full href hard-navigates and discards every unsaved edit. */}
+                  Connect Whop before this means anything.{' '}
                   <a
                     href="#payments"
                     className="font-medium underline underline-offset-2 hover:text-foreground"
@@ -223,14 +229,10 @@ export function OfferingFields({
                     Set up payments first →
                   </a>
                 </>
-              )}
-              {!isConsult && whopConnected && !payoutsEnabled && (
-                <>
-                  {' '}
-                  <span className="font-medium text-foreground">
-                    Whop is still verifying you — tick this now and it switches on by itself.
-                  </span>
-                </>
+              ) : notYetPublished ? (
+                'Turns on by itself once you set up payments below — nothing to do here yet.'
+              ) : (
+                'On: checkout is live for this offering. Turn off to pause it without unpublishing.'
               )}
             </span>
           </span>
