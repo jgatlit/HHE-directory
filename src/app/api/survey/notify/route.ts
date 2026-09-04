@@ -29,6 +29,7 @@ type SurveyRow = {
   created_at: string;
   instrument_version: string | null;
   wave: string;
+  email: string | null;
   scheduling_tool: string | null;
   booking_links_detail: string | null;
   no_tool_how_book: string | null;
@@ -56,10 +57,12 @@ const FIELD_LABELS: [keyof SurveyRow, string][] = [
 
 function buildEmail(row: SurveyRow) {
   const or_ = (v: string | null) => v || '(not answered)';
-  const subject = `New practitioner survey response — ${or_(row.scheduling_tool)}`;
+  const subject = `New practitioner survey response — ${or_(row.email)}`;
 
   const text = [
     'PRACTITIONER PREFERENCES SURVEY — new response',
+    '',
+    `Respondent email: ${or_(row.email)}`,
     '',
     ...FIELD_LABELS.map(([key, label]) => `${label}: ${or_(row[key] as string | null)}`),
     '',
@@ -69,6 +72,7 @@ function buildEmail(row: SurveyRow) {
 
   const html = `<div style="font-family: -apple-system, system-ui, sans-serif; font-size: 15px; line-height: 1.6; color: #1a1a1a;">
 <p><strong>New practitioner survey response</strong></p>
+<p>Respondent: <strong>${escapeHtml(or_(row.email))}</strong></p>
 <table cellpadding="4" cellspacing="0">
 ${FIELD_LABELS.map(
   ([key, label]) =>

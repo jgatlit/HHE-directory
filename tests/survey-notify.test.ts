@@ -22,6 +22,7 @@ const row = {
   created_at: '2026-09-04T12:00:00Z',
   instrument_version: '2026-09-04',
   wave: 'directory-launch',
+  email: 'respondent@example.com',
   scheduling_tool: 'Calendly',
   booking_links_detail: 'one link for intro calls',
   no_tool_how_book: null,
@@ -99,12 +100,17 @@ describe('survey-notify webhook', () => {
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
-  it('emails all four recipients, each with a unique per-recipient idempotency key', async () => {
+  it('emails all four recipients, each with a unique per-recipient idempotency key, and names the respondent', async () => {
     const { status, body: resBody } = await post(row, { authorization: 'Bearer test-secret' });
 
     expect(status).toBe(200);
     expect(resBody).toMatchObject({ ok: true, sent: 4, failures: [] });
     expect(mocks.sendEmail).toHaveBeenCalledTimes(4);
+
+    const first = mocks.sendEmail.mock.calls[0][0];
+    expect(first.subject).toContain('respondent@example.com');
+    expect(first.text).toContain('Respondent email: respondent@example.com');
+    expect(first.html).toContain('respondent@example.com');
 
     const recipients = mocks.sendEmail.mock.calls.map(([arg]) => arg.to);
     expect(recipients).toEqual([
