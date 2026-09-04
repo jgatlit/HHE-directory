@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { Calendar, ChevronDown, ChevronRight } from 'lucide-react';
 import { formatPrice } from '@/lib/money';
 
@@ -49,7 +48,11 @@ export function BookingChooser({ ctaLabel, subLabel, options }: Props) {
       <ul className="space-y-1 border-t border-cta-foreground/15 bg-card p-2">
         {options.map((o) => (
           <li key={o.id}>
-            <Link
+            {/* Plain `<a>`, not next/link's `Link` (§22). A LISTED offering's href is an in-page
+                `#offering-…` anchor, and OfferingDetailOpener listens for the native `hashchange`
+                event — which a client-routed Link does not reliably fire. A real `<a>` also still
+                works correctly for the LINK_ONLY href (a full `/book?…` URL). */}
+            <a
               href={o.href}
               className="group/opt flex items-center gap-3 rounded-md p-2.5 text-foreground transition-colors hover:bg-accent/40"
             >
@@ -63,7 +66,7 @@ export function BookingChooser({ ctaLabel, subLabel, options }: Props) {
                 className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover/opt:translate-x-0.5"
                 aria-hidden
               />
-            </Link>
+            </a>
           </li>
         ))}
       </ul>

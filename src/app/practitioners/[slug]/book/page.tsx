@@ -48,7 +48,7 @@ export default async function BookCapturePage({ params, searchParams }: Props) {
     searchParams.offering
       ? prisma.whopProduct.findFirst({
           where: { id: searchParams.offering, practitionerId: practitioner.id, archived: false },
-          select: { id: true, title: true, bookingLinkId: true },
+          select: { id: true, title: true, description: true, bookingLinkId: true },
         })
       : null,
     searchParams.link
@@ -96,6 +96,7 @@ export default async function BookCapturePage({ params, searchParams }: Props) {
           bookingLinkId={bookingLink?.id ?? null}
           offeringId={offering?.id ?? null}
           subject={offering?.title ?? bookingLink?.label ?? null}
+          subjectDescription={offering?.description ?? null}
           start={start}
           advance={recordScheduleSignal}
         />

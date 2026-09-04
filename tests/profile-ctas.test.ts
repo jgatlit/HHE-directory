@@ -11,6 +11,7 @@ import {
   type CtaBookingLink,
   linkPriceHint,
   offeringsSurfacedByLinks,
+  unattachedNameMatch,
 } from '@/lib/profile-ctas';
 
 const link = (id: string, o: Partial<CtaBookingLink> = {}): CtaBookingLink => ({
@@ -165,16 +166,24 @@ describe('offeringTarget — a decided buyer is never re-presented a menu', () =
   });
 });
 
-describe('chooserOptionTarget — the two chooser paths share one construction', () => {
-  it('carries both link and offering', () => {
-    const href = chooserOptionTarget('sarah', 'L1', 'off1');
+describe('chooserOptionTarget — §22: LISTED anchors to its card, LINK_ONLY still goes straight in', () => {
+  it('a LISTED offering routes to its right-column card, not the flow', () => {
+    const href = chooserOptionTarget('sarah', 'L1', off('off1'));
+    expect(href).toBe('#offering-off1');
+  });
+
+  it('a LINK_ONLY offering (no card exists) still carries both link and offering into the flow', () => {
+    const href = chooserOptionTarget('sarah', 'L1', off('off1', { listingVisibility: 'LINK_ONLY' }));
     expect(href).toBe('/practitioners/sarah/book?link=L1&offering=off1');
   });
 
-  it('encodes each component', () => {
-    expect(chooserOptionTarget('a/b', 'L 1', 'o&1')).toContain('/practitioners/a%2Fb/book');
-    expect(chooserOptionTarget('s', 'L 1', 'o&1')).toContain('link=L+1');
-    expect(chooserOptionTarget('s', 'L1', 'o&1')).toContain('offering=o%261');
+  it('encodes each component on the LINK_ONLY path', () => {
+    const linkOnly = { listingVisibility: 'LINK_ONLY' as const };
+    expect(chooserOptionTarget('a/b', 'L 1', off('o&1', linkOnly))).toContain(
+      '/practitioners/a%2Fb/book',
+    );
+    expect(chooserOptionTarget('s', 'L 1', off('o&1', linkOnly))).toContain('link=L+1');
+    expect(chooserOptionTarget('s', 'L1', off('o&1', linkOnly))).toContain('offering=o%261');
   });
 });
 
@@ -305,5 +314,41 @@ describe('offeringsSurfacedByLinks — the rail must not repeat the booking link
     const surfaced = offeringsSurfacedByLinks(links, offs);
     expect(surfaced.has('o1')).toBe(true);
     expect(surfaced.has('standalone')).toBe(false);
+  });
+});
+
+describe('unattachedNameMatch — §22 edit-page nudge', () => {
+  // Amy Sprouse's real account: a link named "3 Month Health Transformation" carries zero
+  // offerings, while an Offering of that exact title is attached to a DIFFERENT link.
+  it('flags a link whose label names an Offering attached elsewhere', () => {
+    const allTitles = ['Rapid Fire Health Q&A', '1 Month of Support', '3 Month Health Transformation', 'Sunday Session'];
+    expect(unattachedNameMatch('3 Month Health Transformation', [], allTitles)).toBe(
+      '3 Month Health Transformation',
+    );
+  });
+
+  it('does not flag when the named Offering is already attached to this link', () => {
+    const allTitles = ['Rapid Fire Health Q&A'];
+    expect(
+      unattachedNameMatch('Rapid Fire Health Q&A', ['Rapid Fire Health Q&A'], allTitles),
+    ).toBeNull();
+  });
+
+  it('does not flag when no Offering shares the label at all', () => {
+    expect(unattachedNameMatch('Sunday Service (Free)', [], ['Sunday Session'])).toBeNull();
+  });
+
+  it('does not flag an empty label', () => {
+    expect(unattachedNameMatch('', [], ['Anything'])).toBeNull();
+  });
+
+  it('matches case-insensitively and ignores surrounding whitespace', () => {
+    expect(unattachedNameMatch('  rapid fire health q&a  ', [], ['Rapid Fire Health Q&A'])).toBe(
+      'Rapid Fire Health Q&A',
+    );
+  });
+
+  it('does not flag a near-miss — exact match only, to stay trustworthy as a signal', () => {
+    expect(unattachedNameMatch('3 Month Transformation', [], ['3 Month Health Transformation'])).toBeNull();
   });
 });

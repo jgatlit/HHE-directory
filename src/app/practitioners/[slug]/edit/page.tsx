@@ -247,6 +247,21 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
   const heroLabel = heroLink
     ? ctaLabelFor(heroLink, offeringsForLink(ctaOfferingsForHint, heroLink.id))
     : null;
+
+  // §22: which Offering(s) each Booking Link actually carries — the visibility gap that let Amy
+  // Sprouse's own "3 Month Health Transformation" offering sit attached to her "1 Month of
+  // Support" link, unnoticed, while the identically-named link sat empty. Same offeringsForLink
+  // helper the public page/chooser use, so this can't drift from what actually renders.
+  const offeringsByLinkId: Record<string, { title: string; priceUsdCents: number }[]> =
+    Object.fromEntries(
+      ctaLinks.map((l) => [
+        l.id,
+        offeringsForLink(ctaOfferingsForHint, l.id).map((o) => ({
+          title: o.title,
+          priceUsdCents: o.priceUsdCents,
+        })),
+      ]),
+    );
   const startWhopOnboardingAction = startWhopOnboarding.bind(null, params.slug);
   const openPayoutPortalAction = openPayoutPortal.bind(null, params.slug);
   const startSubscriptionCheckoutAction = startSubscriptionCheckout.bind(null, params.slug);
@@ -808,6 +823,8 @@ export default async function EditPractitionerPage({ params, searchParams }: Pro
                 url: b.url,
                 ctaLabel: b.ctaLabel ?? '',
               }))}
+              offeringsByLinkId={offeringsByLinkId}
+              offeringTitles={practitioner.whopProducts.map((o) => o.title)}
             />
           </Card>
         </div>

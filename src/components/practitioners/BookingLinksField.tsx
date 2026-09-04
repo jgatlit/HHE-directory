@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Plus, X, ExternalLink } from 'lucide-react';
 import { SortableList } from '@/components/practitioners/SortableList';
 import { duplicateBookingRowKeys } from '@/lib/booking-links';
+import { unattachedNameMatch } from '@/lib/profile-ctas';
 import { detectProvider, extractUrlFromEmbed, withScheme, PROVIDER_LABEL } from '@/lib/booking-providers';
+import { formatPrice } from '@/lib/money';
 
 export type BookingLinkInput = { id: string; label: string; url: string; ctaLabel: string };
 /**
@@ -24,6 +26,13 @@ type Props = {
    *  that one field silently drops out of the submission with no error — the same "missing form="
    *  shape this codebase is already careful about elsewhere. */
   formId: string;
+  /** §22: which Offering(s) each persisted Booking Link (keyed on `dbId`) actually carries — the
+   *  same relationship the public chooser/hero render from, surfaced here so a practitioner can
+   *  see a mismatch WHILE editing instead of only on their own live profile. */
+  offeringsByLinkId: Record<string, { title: string; priceUsdCents: number }[]>;
+  /** Every Offering title on the account, for the "this link's name matches an Offering that
+   *  isn't attached to it" nudge below. */
+  offeringTitles: string[];
 };
 
 /**
@@ -44,7 +53,12 @@ type Props = {
  * edited row from a new one, and its only option is to delete every link and recreate them —
  * which mints new ids on every save and breaks anything pointing at BookingLink.id.
  */
-export function BookingLinksField({ initial, formId }: Props) {
+export function BookingLinksField({
+  initial,
+  formId,
+  offeringsByLinkId,
+  offeringTitles,
+}: Props) {
   const nextKey = useRef(0);
   const mint = () => `bl-${nextKey.current++}`;
   const [rows, setRows] = useState<Row[]>(() =>
@@ -112,7 +126,22 @@ export function BookingLinksField({ initial, formId }: Props) {
   return (
     <div className="space-y-2" ref={root}>
       <SortableList items={rows} onReorder={setRows}>
-        {(row, i, handle) => (
+        {(row, i, handle) => {
+          // §22: attached-offerings visibility + the mismatch nudge. Both are read-only signals
+          // for a row that has actually been saved — a brand-new, not-yet-persisted row has no
+          // BookingLink.id to look up and showing "No offerings attached" for it would be a false
+          // signal about a link that does not exist yet.
+          const attached = row.dbId ? (offeringsByLinkId[row.dbId] ?? []) : [];
+          const unattachedMatch =
+            row.dbId !== ''
+              ? unattachedNameMatch(
+                  row.label,
+                  attached.map((a) => a.title),
+                  offeringTitles,
+                )
+              : null;
+
+          return (
           <div className="flex items-start gap-2 pb-2">
             {handle}
             {/* Posted alongside the visible fields so the three getAll() arrays line up by index.
@@ -206,6 +235,30 @@ export function BookingLinksField({ initial, formId }: Props) {
                   them different names if you did not.
                 </p>
               )}
+              {/* §22: which Offering(s) this link actually carries — Amy Sprouse's own account had
+                  an Offering named "3 Month Health Transformation" attached to a DIFFERENT link
+                  than the one also named "3 Month Health Transformation", invisible until the
+                  live profile was checked. Only for a persisted link — see the comment above. */}
+              {row.dbId !== '' && (
+                <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                  {attached.length > 0 ? (
+                    <>
+                      Offerings attached:{' '}
+                      {attached
+                        .map((o) => `${o.title} (${formatPrice(o.priceUsdCents)})`)
+                        .join(', ')}
+                    </>
+                  ) : (
+                    'No offerings attached — this link opens straight into scheduling.'
+                  )}
+                </p>
+              )}
+              {unattachedMatch && (
+                <p className="text-[11px] text-amber-700 sm:col-span-2 dark:text-amber-400">
+                  You have an Offering titled &ldquo;{unattachedMatch}&rdquo; that isn&apos;t
+                  attached to this link — attach it below if that was the intent.
+                </p>
+              )}
             </div>
             <button
               type="button"
@@ -216,7 +269,8 @@ export function BookingLinksField({ initial, formId }: Props) {
               <X className="h-4 w-4" aria-hidden />
             </button>
           </div>
-        )}
+          );
+        }}
       </SortableList>
 
       {rows.length > 1 && (

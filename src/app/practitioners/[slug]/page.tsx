@@ -120,6 +120,12 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
   // Computed once, not per offering inside the filter below.
   const surfacedByLink = offeringsSurfacedByLinks(p.bookingLinks, ctaOfferings);
 
+  // §22: offerings a single Booking Link row already fully represents (title, price, duration)
+  // get no card here — nothing left to add, and their fast-path link never routes here anyway.
+  // What remains is exactly what the rail/chooser can still anchor into: standalone offerings and
+  // catch-all-link members.
+  const offeringsNeedingDetail = gridOfferings.filter((o) => !surfacedByLink.has(o.id));
+
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-10 sm:py-16">
       <div className="mx-auto max-w-4xl space-y-4">
@@ -235,18 +241,20 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                   call ("See, that looks great!"). Only LISTED offerings: a LINK_ONLY free consult
                   stays reachable through the booking-link chooser and nowhere else (§4, D3). */}
               <OfferingsSummaryRail
-                // Skip anything a Booking Link row above already shows in full. On a
-                // purpose-built profile (one link per offering) that is ALL of them, and without
-                // this the same three titles and prices render twice in one column.
-                offerings={gridOfferings
-                  .filter((o) => !surfacedByLink.has(o.id))
+                // §22: standalone offerings ONLY. A single-linked offering is already shown in
+                // full by its Booking Link row above; a catch-all-linked offering (2+ per link)
+                // now has its OWN left-pane entry point via the chooser, which anchors straight
+                // into the same right-column card — a rail row here would be a second path to
+                // the exact same card the chooser already opens.
+                offerings={offeringsNeedingDetail
+                  .filter((o) => o.bookingLinkId === null)
                   .map((o) => ({
                   id: o.id,
                   title: o.title,
                   priceUsdCents: o.priceUsdCents,
                   interval: o.interval,
-                    duration: o.duration,
-                  }))}
+                  duration: o.duration,
+                }))}
               />
             </aside>
 
@@ -312,7 +320,14 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                 </section>
               )}
 
-              {gridOfferings.length > 0 && (
+              {/* §22: no longer the full Offerings grid. An offering fully represented by a
+                  single Booking Link row on the left (surfacedByLink) has nothing left to add
+                  here — that pair now renders ONCE, not twice — so this list is reveal-only
+                  targets for offerings that still need a detail read: standalone offerings
+                  (rail) and multi-offering chooser members (chooser now anchors here instead of
+                  routing straight into the flow, see PractitionerCTAs/BookingChooser). Closed by
+                  default (`<details>`); nothing here duplicates the left pane. */}
+              {offeringsNeedingDetail.length > 0 && (
                 <section
                   aria-label="Offerings"
                   className="space-y-3 rounded-xl bg-secondary/40 p-6"
@@ -321,12 +336,13 @@ export default async function PractitionerPage({ params, searchParams }: PagePro
                     Offerings
                   </h2>
                   <ul className="space-y-2.5">
-                    {gridOfferings.map((o) => (
+                    {offeringsNeedingDetail.map((o) => (
                       <OfferingCard
                         key={o.id}
                         anchorId={offeringAnchorId(o.id)}
-                        // The rail renders the same LISTED offerings, so this card drops its
-                        // duplicate price line and shows it in the expanded detail instead.
+                        // The rail still renders this same set (standalone + catch-all-linked
+                        // offerings), so the card drops its duplicate price line — the expanded
+                        // detail below still states it.
                         railed
                         title={o.title}
                         description={o.description}

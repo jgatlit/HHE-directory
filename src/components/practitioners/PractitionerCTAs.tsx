@@ -157,7 +157,7 @@ function HeroCta({
           id: o.id,
           title: o.title,
           priceUsdCents: o.priceUsdCents,
-          href: chooserOptionTarget(slug, link.id, o.id),
+          href: chooserOptionTarget(slug, link.id, o),
         }))}
       />
     );
@@ -204,7 +204,7 @@ function SecondaryCta({
           id: o.id,
           title: o.title,
           priceUsdCents: o.priceUsdCents,
-          href: chooserOptionTarget(slug, link.id, o.id),
+          href: chooserOptionTarget(slug, link.id, o),
         }))}
       />
     );
